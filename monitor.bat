@@ -1,16 +1,17 @@
 @echo off
 chcp 65001
 
-:: --- ВНИМАНИЕ: ТОКЕН И ID ТЕПЕРЬ ПРИХОДЯТ ИЗ JENKINS ---
+:: --- ВНИМАНИЕ: ТОКЕН И ID ПРИХОДЯТ ИЗ JENKINS ---
 
 :: --- ПРОВЕРКА БАЗЫ ---
-docker exec dev-postgres-db psql -U postgres -c "INSERT INTO robot_log (status) VALUES ('GitHub Clean Build - OK');" || (
-    curl -k -X POST "https://api.telegram.org/bot%TOKEN%/sendMessage" -d chat_id=%CHAT_ID% -d text="🚨 AHTUNG! Baza upala! Proverka iz GitHub provalena."
+docker exec dev-postgres-db psql -U postgres -c "INSERT INTO robot_log (status) VALUES ('Build #%BUILD_NUMBER% - OK');" || (
+    curl -k -X POST "https://api.telegram.org/bot%TOKEN%/sendMessage" -d chat_id=%CHAT_ID% -d text="🚨 AHTUNG! Sborka #%BUILD_NUMBER% upala! Baza nedostupna."
     exit 1
 )
 
 :: --- УСПЕХ ---
-curl -k -X POST "https://api.telegram.org/bot%TOKEN%/sendMessage" -d chat_id=%CHAT_ID% -d text="🚀 MAAGIA! Jenkins sam zapustilsya posle git push!"
+:: Смотри сюда: я добавил %BUILD_NUMBER% в текст
+curl -k -X POST "https://api.telegram.org/bot%TOKEN%/sendMessage" -d chat_id=%CHAT_ID% -d text="✅ Sborka #%BUILD_NUMBER% uspeshna! Avto-test proiden."
 
 :: --- ОЧИСТКА ---
 docker exec dev-postgres-db psql -U postgres -c "DELETE FROM robot_log WHERE visit_time < NOW() - INTERVAL '1 day';"
