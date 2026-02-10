@@ -5,7 +5,7 @@ chcp 65001
 
 :: --- ПРОВЕРКА БАЗЫ ---
 docker exec dev-postgres-db psql -U postgres -c "INSERT INTO robot_log (status) VALUES ('Build #%BUILD_NUMBER% - OK');" || (
-    curl -k -X POST "https://api.telegram.org/bot%TOKEN%/sendMessage" -d chat_id=%CHAT_ID% -d text="🚨 AHTUNG! Sborka #%BUILD_NUMBER% upala! Baza nedostupna."
+    curl -k -X POST "https://api.telegram.org/bot%TOKEN%/sendMessage" -d chat_id=%CHAT_ID% -d text="🚨 Oshibka! Sborka #%BUILD_NUMBER% upala! Baza nedostupna."
     exit 1
 )
 
