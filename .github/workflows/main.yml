@@ -1,0 +1,51 @@
+name: Cloud QA Monitor 🚀
+
+# Когда запускать? (При пуше кода)
+on: [push]
+
+jobs:
+  test-database:
+    runs-on: ubuntu-latest # Берем компьютер с Linux
+
+    # 🔥 Вот ответ на твой вопрос!
+    # Мы просим GitHub поднять PostgreSQL прямо здесь, в облаке
+    services:
+      postgres:
+        image: postgres:latest
+        env:
+          POSTGRES_PASSWORD: mysecretpassword
+        ports:
+          - 5432:5432
+        # Ждем, пока база загрузится (Healthcheck)
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: 📥 Скачиваем код
+        uses: actions/checkout@v3
+
+      - name: 🛠 Ставим клиент Postgres
+        run: sudo apt-get install -y postgresql-client
+
+      - name: 🧪 ЗАПУСК ТЕСТА (SQL Insert)
+        run: |
+          # Пробуем вставить запись в облачную базу
+          PGPASSWORD=mysecretpassword psql -h localhost -U postgres -c "CREATE TABLE IF NOT EXISTS robot_log (id SERIAL PRIMARY KEY, status TEXT, visit_time TIMESTAMP DEFAULT NOW());"
+          PGPASSWORD=mysecretpassword psql -h localhost -U postgres -c "INSERT INTO robot_log (status) VALUES ('GitHub Cloud Test - OK');"
+
+      - name: ✅ УСПЕХ - Шлем в Telegram
+        if: success()
+        run: |
+          curl -s -X POST https://api.telegram.org/bot${{ secrets.TG_TOKEN }}/sendMessage \
+          -d chat_id=${{ secrets.TG_CHAT_ID }} \
+          -d text="☁️ OBLAKO: Test uspeshen! Baza v GitHub rabotaet."
+
+      - name: 🚨 ОШИБКА - Шлем в Telegram
+        if: failure()
+        run: |
+          curl -s -X POST https://api.telegram.org/bot${{ secrets.TG_TOKEN }}/sendMessage \
+          -d chat_id=${{ secrets.TG_CHAT_ID }} \
+          -d text="🔥 OBLAKO: Test upal! Baza nedostupna."
