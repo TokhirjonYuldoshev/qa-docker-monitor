@@ -75,8 +75,8 @@ qa-docker-monitor/
 
 | Status | Telegram Message |
 |--------|------------------|
-| ✅ Success | ☁️ OBLAKO: Vse rabotaet! Proverka proshla uspeshno. |
-| 🚨 Failure | 🔥 OBLAKO: AHTUNG! Test upal. Baza nedostupna. |
+| ✅ Success | ☁️ CLOUD: Success! System is healthy. |
+| 🚨 Failure | 🔥 CLOUD: ALERT! Test failed. Database is down. |
 
 ---
 
