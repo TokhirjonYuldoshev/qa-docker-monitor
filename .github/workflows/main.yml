@@ -2,14 +2,19 @@ name: Cloud QA Monitor 🚀
 
 # ТРИГГЕРЫ: Когда запускать?
 on:
-  push:                   # 1. При изменении кода
-  workflow_dispatch:      # 2. Появится кнопка "Run workflow" (Ручной запуск)
+  push:
+    branches: [ main ]          # Запуск при пуше в основную ветку
+  workflow_dispatch:           # Кнопка ручного запуска
   schedule:
-    - cron: '*/10 * * * *' # 3. Автоматически каждые 10 минут
+    - cron: '*/10 * * * *'     # Каждые 10 минут
+
+# Настройка окружения, чтобы убрать предупреждения о Node.js
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   test-database:
-    runs-on: ubuntu-latest # Используем Linux сервер GitHub
+    runs-on: ubuntu-latest
 
     # Создаем временную базу данных для теста
     services:
@@ -19,7 +24,7 @@ jobs:
           POSTGRES_PASSWORD: mysecretpassword
         ports:
           - 5432:5432
-        # Проверка здоровья: ждем, пока база скажет "Я готова!"
+        # Проверка здоровья: ждем готовности
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -30,7 +35,7 @@ jobs:
       - name: 📥 Скачиваем код из репозитория
         uses: actions/checkout@v4
 
-      - name: ⏳ Страховочная пауза (чтобы база точно проснулась)
+      - name: ⏳ Страховочная пауза
         run: sleep 10
 
       - name: 🛠 Установка клиента Postgres
@@ -43,7 +48,7 @@ jobs:
           # 1. Создаем таблицу, если её нет
           psql -h localhost -U postgres -c "CREATE TABLE IF NOT EXISTS robot_log (id SERIAL PRIMARY KEY, status TEXT, visit_time TIMESTAMP DEFAULT NOW());"
           
-          # 2. Пробуем вставить данные (Сам Тест)
+          # 2. Пробуем вставить данные
           psql -h localhost -U postgres -c "INSERT INTO robot_log (status) VALUES ('GitHub Cloud Test - OK');"
 
       - name: ✅ УСПЕХ - Отправка в Telegram
@@ -65,6 +70,3 @@ jobs:
           curl -s -X POST https://api.telegram.org/bot$TG_TOKEN/sendMessage \
           -d chat_id=$TG_CHAT_ID \
           -d text="🔥 CLOUD: ALERT! Test failed. Database is down."
-
-
-          
