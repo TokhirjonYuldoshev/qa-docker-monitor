@@ -28,7 +28,7 @@ jobs:
 
     steps:
       - name: 📥 Скачиваем код из репозитория
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: ⏳ Страховочная пауза (чтобы база точно проснулась)
         run: sleep 10
