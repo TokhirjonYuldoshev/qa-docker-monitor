@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   database-health:
-    name: PostgreSQL write health check
+    name: PostgreSQL write/read health check
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -41,7 +41,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y postgresql-client
 
-      - name: Run SQL write health check
+      - name: Run SQL write/read health check
         id: database_check
         continue-on-error: true
         env:
@@ -77,7 +77,7 @@ jobs:
             esac
           }
           {
-            echo "## PostgreSQL write health"
+            echo "## PostgreSQL write/read health"
             echo
             echo "- Результат: **$(status_ru "${HEALTH_OUTCOME:-not-run}")**"
             echo "- Проверка: readiness + SQL CREATE/INSERT + read-back assertion"
@@ -89,7 +89,7 @@ jobs:
       - name: Enforce database health result
         if: ${{ always() && steps.database_check.outcome != 'success' }}
         run: |
-          echo "PostgreSQL write health check did not succeed." >&2
+          echo "PostgreSQL write/read health check did not succeed." >&2
           exit 1
 
   windows-contract:
