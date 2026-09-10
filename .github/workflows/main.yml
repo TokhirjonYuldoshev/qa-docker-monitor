@@ -59,6 +59,10 @@ jobs:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: |
+          if [[ -z "$TG_TOKEN" || -z "$TG_CHAT_ID" ]]; then
+            echo "::notice::Telegram secrets are not configured; success notification skipped."
+            exit 0
+          fi
           curl --fail-with-body --silent --show-error \
             -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
             -d "chat_id=${TG_CHAT_ID}" \
@@ -71,6 +75,10 @@ jobs:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: |
+          if [[ -z "$TG_TOKEN" || -z "$TG_CHAT_ID" ]]; then
+            echo "::notice::Telegram secrets are not configured; failure notification skipped."
+            exit 0
+          fi
           curl --fail-with-body --silent --show-error \
             -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
             -d "chat_id=${TG_CHAT_ID}" \
@@ -100,6 +108,7 @@ jobs:
 
   windows-contract:
     name: Windows monitor contract
+    if: ${{ github.event_name != 'schedule' }}
     runs-on: windows-latest
     timeout-minutes: 10
     steps:
@@ -171,3 +180,40 @@ jobs:
           - DB failure + Telegram failure: **exit 1**
           - Health source of truth: **PostgreSQL write result**
           '@ | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+
+  gate:
+    name: CI / Required gate
+    if: ${{ always() }}
+    needs: [database-health, windows-contract]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Publish aggregate monitoring summary
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DATABASE_RESULT: ${{ needs.database-health.result }}
+          WINDOWS_RESULT: ${{ needs.windows-contract.result }}
+        run: |
+          {
+            echo "## Monitoring quality gate"
+            echo
+            echo "- PostgreSQL write health: **${DATABASE_RESULT}**"
+            echo "- Windows monitor contract: **${WINDOWS_RESULT}**"
+            echo "- Trigger: **${EVENT_NAME}**"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Enforce aggregate result
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DATABASE_RESULT: ${{ needs.database-health.result }}
+          WINDOWS_RESULT: ${{ needs.windows-contract.result }}
+        run: |
+          set -euo pipefail
+          if [[ "$DATABASE_RESULT" != 'success' ]]; then
+            echo "PostgreSQL write health job finished with: $DATABASE_RESULT" >&2
+            exit 1
+          fi
+          if [[ "$EVENT_NAME" != 'schedule' && "$WINDOWS_RESULT" != 'success' ]]; then
+            echo "Windows monitor contract finished with: $WINDOWS_RESULT" >&2
+            exit 1
+          fi
