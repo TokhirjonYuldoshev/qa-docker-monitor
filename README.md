@@ -12,6 +12,7 @@ Automated PostgreSQL health checks with **GitHub Actions**, **Docker**, **Jenkin
 - SQL write validation instead of a superficial port-only check;
 - explicit separation between the **health signal** and the **notification channel**;
 - GitHub Actions run summary with the health-check outcome;
+- contract tests for Windows/Jenkins monitor exit semantics using isolated command doubles;
 - local Windows monitoring script intended for Jenkins execution;
 - credentials passed through CI/Jenkins secret storage rather than committed to the repository.
 
@@ -25,7 +26,9 @@ flowchart LR
     R --> TG1[Telegram notification]
     R --> S[GitHub Actions summary]
 
-    J[Jenkins / Windows] --> BAT[monitor.bat]
+    GH --> WT[Windows monitor contract tests]
+    WT --> BAT[monitor.bat]
+    J[Jenkins / Windows] --> BAT
     BAT --> PG2[Persistent Docker PostgreSQL]
     BAT --> TG2[Telegram result]
 ```
@@ -36,19 +39,27 @@ Workflow: `.github/workflows/main.yml`
 
 Triggers:
 
-- pull requests — validates the health-check workflow before merge, with Telegram notifications intentionally skipped;
-- push to `main` — runs the check and may send Telegram status;
-- manual `workflow_dispatch` — runs the check on demand;
+- pull requests — validates both the PostgreSQL probe and Windows monitor contract before merge, with Telegram notifications intentionally skipped;
+- push to `main` — runs validation and may send Telegram status;
+- manual `workflow_dispatch` — runs validation on demand;
 - schedule at **09:00 and 21:00 UTC** every day.
 
-The GitHub runner starts a PostgreSQL service container, waits for its readiness health check, installs the PostgreSQL client and performs a real SQL write operation:
+The Linux job starts a PostgreSQL service container, waits for its readiness health check, installs the PostgreSQL client and performs a real SQL write operation:
 
 ```sql
 CREATE TABLE IF NOT EXISTS robot_log (...);
 INSERT INTO robot_log (status) VALUES ('GitHub Cloud Test - OK');
 ```
 
-The repository itself does not need to be checked out for this self-contained health probe, so the workflow avoids an unnecessary checkout step.
+A separate `windows-latest` job executes `monitor.bat` against isolated `docker.cmd` and `curl.cmd` command doubles. It verifies three failure-semantics contracts:
+
+| Scenario | Expected result |
+| --- | --- |
+| Database succeeds, Telegram disabled | exit `0` |
+| Database succeeds, Telegram transport fails | exit `0` |
+| Database fails, Telegram transport also fails | exit `1` |
+
+These tests validate orchestration semantics without requiring a real Jenkins agent, a persistent local database, or real Telegram credentials.
 
 ## Failure semantics
 
@@ -59,7 +70,8 @@ The **database write check is the source of truth** for the monitoring result.
 - Telegram success/failure delivery is attempted as an auxiliary observability channel on operational runs;
 - pull-request validation never sends Telegram notifications;
 - a Telegram transport problem does not convert a healthy PostgreSQL check into a false database failure;
-- notification steps do not hide a real database failure.
+- notification steps do not hide a real database failure;
+- the Windows contract suite guards those same exit-code semantics against regression.
 
 This separation keeps monitoring semantics clear: **product/dependency health** and **alert delivery health** are related, but they are not the same signal.
 
@@ -88,7 +100,8 @@ No bot token or chat ID is stored in the repository.
 | Local automation | Jenkins / Windows batch |
 | Database | PostgreSQL |
 | Containerization | Docker |
-| Validation | SQL write health check |
+| Contract validation | Windows runner + command doubles |
+| Health validation | SQL write health check |
 | Notifications | Telegram Bot API |
 
 ## Repository structure
@@ -104,7 +117,7 @@ qa-docker-monitor/
 
 ## Why this is a QA project
 
-The goal is not only to keep a process alive. The monitor verifies an observable product dependency — database availability **and write capability** — and produces a repeatable CI signal with pre-merge validation, explicit failure semantics and auxiliary alerting.
+The goal is not only to keep a process alive. The monitor verifies an observable product dependency — database availability **and write capability** — and produces a repeatable CI signal with pre-merge validation, explicit failure semantics, contract-tested orchestration and auxiliary alerting.
 
 ---
 
