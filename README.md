@@ -65,7 +65,7 @@ This separation keeps monitoring semantics clear: **product/dependency health** 
 
 ## Local / Jenkins-compatible monitor
 
-`monitor.bat` checks a persistent Docker container named `dev-postgres-db` by executing an `INSERT` through `psql`. The script returns a non-zero exit code when the database check fails and sends the result to Telegram.
+`monitor.bat` checks a persistent Docker container named `dev-postgres-db` by executing an `INSERT` through `psql`. The script returns a non-zero exit code when the database check fails and returns zero after a successful write check. Telegram delivery and retention cleanup are best-effort operations and cannot overwrite that database-health result.
 
 Expected environment variables are supplied by Jenkins or another runner:
 
