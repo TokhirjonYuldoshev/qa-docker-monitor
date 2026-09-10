@@ -107,6 +107,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path .qa-test-bin | Out-Null
           @'
           @echo off
+          if defined MOCK_DOCKER_OUTPUT echo %MOCK_DOCKER_OUTPUT%
           exit /b %MOCK_DOCKER_EXIT%
           '@ | Set-Content -Encoding ascii .qa-test-bin/docker.cmd
           @'
@@ -124,12 +125,14 @@ jobs:
             param(
               [Parameter(Mandatory = $true)][string]$Name,
               [Parameter(Mandatory = $true)][int]$DockerExit,
+              [Parameter(Mandatory = $true)][string]$DockerOutput,
               [Parameter(Mandatory = $true)][int]$CurlExit,
               [Parameter(Mandatory = $true)][bool]$EnableTelegram,
               [Parameter(Mandatory = $true)][int]$ExpectedExit
             )
 
             $env:MOCK_DOCKER_EXIT = "$DockerExit"
+            $env:MOCK_DOCKER_OUTPUT = $DockerOutput
             $env:MOCK_CURL_EXIT = "$CurlExit"
             $env:BUILD_NUMBER = 'contract-test'
             $env:DB_CONTAINER = 'qa-contract-postgres'
@@ -150,9 +153,11 @@ jobs:
             Write-Host "PASS: $Name -> exit $actualExit"
           }
 
-          Invoke-MonitorScenario -Name 'database-success-without-telegram' -DockerExit 0 -CurlExit 0 -EnableTelegram $false -ExpectedExit 0
-          Invoke-MonitorScenario -Name 'database-success-notification-failure' -DockerExit 0 -CurlExit 1 -EnableTelegram $true -ExpectedExit 0
-          Invoke-MonitorScenario -Name 'database-failure-notification-failure' -DockerExit 1 -CurlExit 1 -EnableTelegram $true -ExpectedExit 1
+          $expectedStatus = 'Build #contract-test - OK'
+          Invoke-MonitorScenario -Name 'database-success-without-telegram' -DockerExit 0 -DockerOutput $expectedStatus -CurlExit 0 -EnableTelegram $false -ExpectedExit 0
+          Invoke-MonitorScenario -Name 'database-success-notification-failure' -DockerExit 0 -DockerOutput $expectedStatus -CurlExit 1 -EnableTelegram $true -ExpectedExit 0
+          Invoke-MonitorScenario -Name 'database-readback-mismatch' -DockerExit 0 -DockerOutput 'unexpected persisted value' -CurlExit 0 -EnableTelegram $false -ExpectedExit 1
+          Invoke-MonitorScenario -Name 'database-failure-notification-failure' -DockerExit 1 -DockerOutput 'unused' -CurlExit 1 -EnableTelegram $true -ExpectedExit 1
           exit 0
 
       - name: Publish contract summary
@@ -161,10 +166,11 @@ jobs:
           @'
           ## Windows monitor contract
 
-          - DB success + Telegram disabled: **exit 0**
-          - DB success + Telegram failure: **exit 0**
-          - DB failure + Telegram failure: **exit 1**
-          - Source of truth: **PostgreSQL write result**
+          - DB write/read success + Telegram disabled: **exit 0**
+          - DB write/read success + Telegram failure: **exit 0**
+          - DB read-back mismatch: **exit 1**
+          - DB command failure + Telegram failure: **exit 1**
+          - Source of truth: **persisted PostgreSQL write/read result**
           '@ | Add-Content -Path $env:GITHUB_STEP_SUMMARY
 
   gate:
@@ -207,7 +213,7 @@ jobs:
 
           | Сигнал | Статус |
           | --- | --- |
-          | PostgreSQL write health | $(status_ru "$DATABASE_RESULT") |
+          | PostgreSQL write/read health | $(status_ru "$DATABASE_RESULT") |
           | Windows monitor contract | $(status_ru "$WINDOWS_RESULT") |
 
           **Trigger:** `${EVENT_NAME}` · **Ветка:** `${BRANCH}` · **Commit:** `${SHORT_SHA}`  
@@ -224,7 +230,7 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "$DATABASE_RESULT" != 'success' ]]; then
-            echo "PostgreSQL write health job finished with: $DATABASE_RESULT" >&2
+            echo "PostgreSQL write/read health job finished with: $DATABASE_RESULT" >&2
             exit 1
           fi
           if [[ "$EVENT_NAME" != 'schedule' && "$WINDOWS_RESULT" != 'success' ]]; then
@@ -305,7 +311,7 @@ jobs:
           MESSAGE+=$'\n'"👤 <b>Автор:</b> <code>${ACTOR}</code>"
           MESSAGE+=$'\n'"🔖 <b>Commit:</b> <code>${SHORT_SHA}</code>"
           MESSAGE+=$'\n\n'"🧪 <b>Сигналы</b>"
-          MESSAGE+=$'\n'"• PostgreSQL write health: $(status_ru "$DATABASE_RESULT")"
+          MESSAGE+=$'\n'"• PostgreSQL write/read health: $(status_ru "$DATABASE_RESULT")"
           MESSAGE+=$'\n'"• Windows monitor contract: $(status_ru "$WINDOWS_RESULT")"
           MESSAGE+=$'\n'"• Required gate: $(status_ru "$GATE_RESULT")"
           MESSAGE+=$'\n\n'"🔗 <a href=\"${RUN_URL}\">Открыть GitHub Actions run #${GITHUB_RUN_NUMBER}</a>"
