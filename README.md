@@ -65,15 +65,18 @@ This separation keeps monitoring semantics clear: **product/dependency health** 
 
 ## Local / Jenkins-compatible monitor
 
-`monitor.bat` checks a persistent Docker container named `dev-postgres-db` by executing an `INSERT` through `psql`. The script returns a non-zero exit code when the database check fails and returns zero after a successful write check. Telegram delivery and retention cleanup are best-effort operations and cannot overwrite that database-health result.
+`monitor.bat` checks a persistent Docker PostgreSQL container by executing an `INSERT` through `psql`. The script returns a non-zero exit code when the database check fails and returns zero after a successful write check. Telegram delivery and retention cleanup are best-effort operations and cannot overwrite that database-health result.
 
-Expected environment variables are supplied by Jenkins or another runner:
+Runtime configuration:
 
-```text
-TOKEN
-CHAT_ID
-BUILD_NUMBER
-```
+| Variable | Required | Behavior |
+| --- | --- | --- |
+| `DB_CONTAINER` | No | Defaults to `dev-postgres-db` |
+| `BUILD_NUMBER` | No | Defaults to `manual` outside Jenkins |
+| `TOKEN` | No for DB health | Enables Telegram only when paired with `CHAT_ID` |
+| `CHAT_ID` | No for DB health | Enables Telegram only when paired with `TOKEN` |
+
+Missing Telegram configuration does **not** prevent the database check from running. This keeps monitoring useful in local/Jenkins environments where alert delivery is intentionally disabled or not yet configured.
 
 No bot token or chat ID is stored in the repository.
 
