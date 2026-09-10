@@ -18,7 +18,7 @@ REM The PostgreSQL write check is the source of truth for this script.
 docker exec "%DB_CONTAINER%" psql -U postgres -v ON_ERROR_STOP=1 -c "INSERT INTO robot_log (status) VALUES ('Build #%BUILD_NUMBER% - OK');"
 if errorlevel 1 (
     if "%NOTIFY_ENABLED%"=="1" (
-        curl --fail --silent --show-error -X POST "https://api.telegram.org/bot%TOKEN%/sendMessage" -d "chat_id=%CHAT_ID%" --data-urlencode "text=🚨 Build #%BUILD_NUMBER% failed: PostgreSQL health check is unavailable." || echo WARNING: Telegram failure notification could not be delivered.
+        curl --fail --silent --show-error --connect-timeout 10 --max-time 20 -X POST "https://api.telegram.org/bot%TOKEN%/sendMessage" -d "chat_id=%CHAT_ID%" --data-urlencode "text=🚨 Build #%BUILD_NUMBER% failed: PostgreSQL health check is unavailable." || echo WARNING: Telegram failure notification could not be delivered.
     )
     endlocal
     exit /b 1
@@ -26,7 +26,7 @@ if errorlevel 1 (
 
 REM Notification transport is auxiliary and must not change a healthy DB result.
 if "%NOTIFY_ENABLED%"=="1" (
-    curl --fail --silent --show-error -X POST "https://api.telegram.org/bot%TOKEN%/sendMessage" -d "chat_id=%CHAT_ID%" --data-urlencode "text=✅ Build #%BUILD_NUMBER% passed: PostgreSQL write health check succeeded." || echo WARNING: Telegram success notification could not be delivered.
+    curl --fail --silent --show-error --connect-timeout 10 --max-time 20 -X POST "https://api.telegram.org/bot%TOKEN%/sendMessage" -d "chat_id=%CHAT_ID%" --data-urlencode "text=✅ Build #%BUILD_NUMBER% passed: PostgreSQL write health check succeeded." || echo WARNING: Telegram success notification could not be delivered.
 )
 
 REM Retention cleanup is best-effort and must not overwrite the health signal.
