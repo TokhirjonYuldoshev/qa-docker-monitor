@@ -82,7 +82,7 @@ Health считается успешным только если SQL-коман�
 
 `CI / Required gate` собирает результаты независимых jobs:
 
-- `PostgreSQL write health check`;
+- `PostgreSQL write/read health check`;
 - `Windows monitor contract`.
 
 Для PR/push/manual нужны оба успешных сигнала. Для scheduled run Windows contract намеренно `skipped`, а gate оценивает operational PostgreSQL health.
