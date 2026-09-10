@@ -24,16 +24,15 @@ if errorlevel 1 goto :database_failure
 docker exec "%DB_CONTAINER%" psql -U postgres -v ON_ERROR_STOP=1 -Atc "SELECT status FROM robot_log ORDER BY id DESC LIMIT 1;" > "%READBACK_FILE%"
 if errorlevel 1 goto :database_failure
 
-set "READBACK_STATUS="
-set /p "READBACK_STATUS="<"%READBACK_FILE%"
-del /q "%READBACK_FILE%" >nul 2>&1
-
-if not "%READBACK_STATUS%"=="%EXPECTED_STATUS%" (
-    echo ERROR: PostgreSQL read-back mismatch. Expected "%EXPECTED_STATUS%", got "%READBACK_STATUS%".
+REM Require an exact persisted value; command success alone is not enough.
+findstr /x /l /c:"%EXPECTED_STATUS%" "%READBACK_FILE%" >nul
+if errorlevel 1 (
+    echo ERROR: PostgreSQL read-back did not match the expected build status.
     goto :database_failure
 )
 
-echo INFO: Verified persisted PostgreSQL status "%READBACK_STATUS%".
+del /q "%READBACK_FILE%" >nul 2>&1
+echo INFO: Verified persisted PostgreSQL status "%EXPECTED_STATUS%".
 
 REM Notification transport is auxiliary and must not change a healthy DB result.
 if "%NOTIFY_ENABLED%"=="1" (
