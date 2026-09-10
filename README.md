@@ -10,7 +10,7 @@ Portfolio-проект по инженерному мониторингу кач
 - pre-merge validation изменений monitoring logic через Pull Request;
 - PostgreSQL 16 service container с readiness health check;
 - реальный SQL `CREATE / INSERT / SELECT` вместо поверхностной проверки порта;
-- уникальный marker на каждый workflow run и явную read-back assertion;
+- persisted-state validation как для cloud workflow, так и для локального Windows/Jenkins monitor;
 - разделение **database health signal** и **notification transport**;
 - contract-тесты Windows/Jenkins monitor через изолированные command doubles;
 - стабильный агрегирующий `CI / Required gate`;
@@ -18,7 +18,7 @@ Portfolio-проект по инженерному мониторингу кач
 - Telegram observability с прямой ссылкой на run;
 - manual-only Telegram diagnostics: `getMe` → `getChat` → `sendMessage`;
 - controlled Dependabot maintenance;
-- security/QA governance через `SECURITY.md` и PR template.
+- security/QA governance через `SECURITY.md`, `CODEOWNERS` и PR template.
 
 ## Архитектура
 
@@ -32,6 +32,7 @@ flowchart LR
     WT --> BAT[monitor.bat]
     J[Jenkins / Windows] --> BAT
     BAT --> PG2[Persistent Docker PostgreSQL]
+    BAT --> LR[Local write + read-back]
 
     R --> G[CI / Required gate]
     WT --> G
@@ -66,12 +67,14 @@ Health считается успешным только если SQL-коман�
 
 | Сценарий | Ожидаемый exit code |
 | --- | ---: |
-| DB успешна, Telegram выключен | `0` |
-| DB успешна, Telegram transport упал | `0` |
-| DB упала и Telegram тоже упал | `1` |
+| DB write/read успешен, Telegram выключен | `0` |
+| DB write/read успешен, Telegram transport упал | `0` |
+| DB read-back вернул неожидаемое состояние | `1` |
+| DB command упала и Telegram тоже упал | `1` |
 
-Контракт защищает два ключевых правила:
+Контракт защищает три ключевых правила:
 
+- успешная SQL-команда без подтверждённого read-back недостаточна для healthy result;
 - ошибка Telegram не должна превращать исправную БД в ложный failure;
 - ошибка БД не должна теряться из-за notification logic.
 
@@ -117,7 +120,9 @@ Notification transport — **вспомогательный observability signal
 
 ## Локальный / Jenkins-compatible monitor
 
-`monitor.bat` выполняет `INSERT` в PostgreSQL внутри Docker container и возвращает ненулевой exit code при реальном DB failure.
+`monitor.bat` теперь проверяет не только успешность `INSERT`, но и persisted state. После записи статуса текущего Jenkins build скрипт читает последнюю запись обратно и сравнивает её с ожидаемым значением.
+
+Локальный health считается успешным только при совпадении read-back. Ошибка команды, ошибка чтения или mismatch возвращают exit code `1`.
 
 Runtime configuration:
 
@@ -133,8 +138,9 @@ Telegram delivery и retention cleanup выполняются best-effort и н�
 ## Failure semantics
 
 - readiness/setup/SQL failure делает health path красным;
-- persisted PostgreSQL write/read result является главным cloud-сигналом;
-- уникальный run marker исключает ложноположительный read-back по данным другого запуска;
+- persisted PostgreSQL write/read result является главным health signal;
+- cloud run marker исключает ложноположительный read-back по данным другого запуска;
+- локальный monitor явно проверяет прочитанное состояние после записи;
 - Telegram failure не создаёт ложный DB failure;
 - notification failure не скрывает реальную ошибку БД;
 - PR validation не отправляет operational Telegram alerts;
@@ -166,6 +172,7 @@ Minor/patch updates группируются, major updates остаются о�
 ```text
 qa-docker-monitor/
 ├── .github/
+│   ├── CODEOWNERS
 │   ├── dependabot.yml
 │   ├── pull_request_template.md
 │   └── workflows/
@@ -178,7 +185,7 @@ qa-docker-monitor/
 
 ## Почему это QA-проект
 
-Задача проекта — не просто проверить, что процесс PostgreSQL запущен. Монитор проверяет наблюдаемую способность критичной зависимости **принять запись и вернуть её обратно**, формирует детерминированный CI signal, валидирует orchestration contract до merge и отделяет dependency health от alert-delivery health.
+Задача проекта — не просто проверить, что процесс PostgreSQL запущен. Монитор проверяет наблюдаемую способность критичной зависимости **принять запись и вернуть ожидаемое состояние обратно**, формирует детерминированный CI signal, валидирует orchestration contract до merge и отделяет dependency health от alert-delivery health.
 
 Такой подход ближе к инженерии качества production-систем, чем обычный `ping` или port check.
 
