@@ -2,20 +2,22 @@
 
 [![QA Database Health Monitor](https://github.com/TokhirjonYuldoshev/qa-docker-monitor/actions/workflows/main.yml/badge.svg)](https://github.com/TokhirjonYuldoshev/qa-docker-monitor/actions/workflows/main.yml)
 
-Portfolio-проект по инженерному мониторингу качества: PostgreSQL проверяется через **реальную запись данных**, оркестрация валидируется в **GitHub Actions**, Windows/Jenkins-логика защищена contract-тестами, а результаты operational runs отправляются в **Telegram**.
+Portfolio-проект по инженерному мониторингу качества: PostgreSQL проверяется через **реальную запись с последующим read-back**, orchestration валидируется в **GitHub Actions**, Windows/Jenkins-логика защищена contract-тестами, а operational results отправляются в **Telegram**.
 
 ## Что демонстрирует проект
 
-- scheduled health checks PostgreSQL в GitHub Actions;
-- pre-merge проверку изменений monitoring logic через Pull Request;
-- PostgreSQL service container с readiness health check;
-- реальный SQL `CREATE/INSERT` вместо поверхностной проверки порта;
-- явное разделение **health signal** и **notification transport**;
+- scheduled PostgreSQL health checks в GitHub Actions;
+- pre-merge validation изменений monitoring logic через Pull Request;
+- PostgreSQL 16 service container с readiness health check;
+- реальный SQL `CREATE / INSERT / SELECT` вместо поверхностной проверки порта;
+- уникальный marker на каждый workflow run и явную read-back assertion;
+- разделение **database health signal** и **notification transport**;
 - contract-тесты Windows/Jenkins monitor через изолированные command doubles;
 - стабильный агрегирующий `CI / Required gate`;
-- Telegram observability с красивым структурированным сообщением и прямой ссылкой на run;
+- структурированный GitHub Actions Summary;
+- Telegram observability с прямой ссылкой на run;
 - manual-only Telegram diagnostics: `getMe` → `getChat` → `sendMessage`;
-- Dependabot для контролируемого обновления GitHub Actions;
+- controlled Dependabot maintenance;
 - security/QA governance через `SECURITY.md` и PR template.
 
 ## Архитектура
@@ -23,8 +25,8 @@ Portfolio-проект по инженерному мониторингу кач
 ```mermaid
 flowchart LR
     GH[GitHub Actions] --> PG1[PostgreSQL 16 service]
-    GH --> SQL1[CREATE TABLE + INSERT]
-    SQL1 --> R[DB health result]
+    GH --> SQL1[CREATE + INSERT + SELECT]
+    SQL1 --> R[Persisted DB health result]
 
     GH --> WT[Windows contract tests]
     WT --> BAT[monitor.bat]
@@ -48,14 +50,15 @@ flowchart LR
 - ручной `workflow_dispatch` — полный on-demand запуск;
 - schedule в **09:00 и 21:00 UTC** — operational PostgreSQL health check без лишнего расхода Windows runner.
 
-Linux job поднимает PostgreSQL 16, ждёт readiness и выполняет реальную write-проверку:
+Linux job поднимает PostgreSQL 16, ждёт readiness и выполняет write/read-проверку. На каждый workflow run формируется уникальный marker из `GITHUB_RUN_ID` и `GITHUB_RUN_ATTEMPT`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS robot_log (...);
-INSERT INTO robot_log (status) VALUES ('GitHub Cloud Test - OK');
+INSERT INTO robot_log (status) VALUES ('<unique run marker>');
+SELECT count(*) FROM robot_log WHERE status = '<unique run marker>';
 ```
 
-Именно успешный SQL write является **source of truth** для health result.
+Health считается успешным только если SQL-команды завершились без ошибки и read-back вернул **ровно одну** сохранённую запись. Таким образом, проверяется не только принятие `INSERT`, но и наблюдаемое persisted state.
 
 ## Windows/Jenkins contract
 
@@ -67,7 +70,10 @@ INSERT INTO robot_log (status) VALUES ('GitHub Cloud Test - OK');
 | DB успешна, Telegram transport упал | `0` |
 | DB упала и Telegram тоже упал | `1` |
 
-Это защищает главный контракт: **ошибка уведомления не должна превращать исправную БД в ложный failure, а ошибка БД не должна теряться из-за notification logic**.
+Контракт защищает два ключевых правила:
+
+- ошибка Telegram не должна превращать исправную БД в ложный failure;
+- ошибка БД не должна теряться из-за notification logic.
 
 ## Aggregate gate
 
@@ -78,27 +84,27 @@ INSERT INTO robot_log (status) VALUES ('GitHub Cloud Test - OK');
 
 Для PR/push/manual нужны оба успешных сигнала. Для scheduled run Windows contract намеренно `skipped`, а gate оценивает operational PostgreSQL health.
 
-GitHub Actions Summary публикуется на русском и показывает итог, trigger, branch, commit и прямую ссылку на run.
+GitHub Actions Summary показывает общий итог, trigger, branch, commit и прямую ссылку на run.
 
 ## Telegram observability
 
 Telegram вынесен в отдельный job после quality gate. Сообщение содержит:
 
 - общий статус `HEALTHY` / `ALERT`;
-- PostgreSQL write health;
+- PostgreSQL write/read health;
 - Windows monitor contract;
 - `CI / Required gate`;
 - репозиторий, ветку, автора, trigger и commit;
 - прямую ссылку на GitHub Actions run.
 
-Поддерживаются стандартные repository secrets:
+Поддерживаются repository secrets:
 
 ```text
 TELEGRAM_BOT_TOKEN
 TELEGRAM_CHAT_ID
 ```
 
-Для обратной совместимости также принимаются существующие:
+Для обратной совместимости также принимаются:
 
 ```text
 TG_TOKEN
@@ -107,7 +113,7 @@ TG_CHAT_ID
 
 Notification transport — **вспомогательный observability signal**. Если Telegram API недоступен, реальный DB health result сохраняется и не подменяется transport failure.
 
-Для отдельной проверки интеграции используется manual-only workflow `.github/workflows/telegram-test.yml`. Он намеренно blocking: проверяет bot token, target chat и отправку тестового сообщения, чтобы отличать ошибку Telegram-конфигурации от ошибки PostgreSQL.
+Для отдельной проверки интеграции используется manual-only workflow `.github/workflows/telegram-test.yml`. Он проверяет bot token, target chat и отправку тестового сообщения, чтобы отличать ошибку Telegram-конфигурации от ошибки PostgreSQL.
 
 ## Локальный / Jenkins-compatible monitor
 
@@ -127,7 +133,8 @@ Telegram delivery и retention cleanup выполняются best-effort и н�
 ## Failure semantics
 
 - readiness/setup/SQL failure делает health path красным;
-- PostgreSQL write result является главным сигналом;
+- persisted PostgreSQL write/read result является главным cloud-сигналом;
+- уникальный run marker исключает ложноположительный read-back по данным другого запуска;
 - Telegram failure не создаёт ложный DB failure;
 - notification failure не скрывает реальную ошибку БД;
 - PR validation не отправляет operational Telegram alerts;
@@ -149,7 +156,7 @@ Minor/patch updates группируются, major updates остаются о�
 | Database | PostgreSQL 16 |
 | Containerization | Docker |
 | Contract validation | Windows runner + command doubles |
-| Health validation | SQL write health check |
+| Health validation | SQL write + read-back assertion |
 | Merge signal | `CI / Required gate` |
 | Notifications | Telegram Bot API |
 | Dependency maintenance | Dependabot |
@@ -171,7 +178,7 @@ qa-docker-monitor/
 
 ## Почему это QA-проект
 
-Задача проекта — не просто проверить, что процесс PostgreSQL запущен. Монитор проверяет наблюдаемую способность критичной зависимости **принимать запись**, формирует детерминированный CI signal, валидирует orchestration contract до merge и отделяет product/dependency health от alert delivery health.
+Задача проекта — не просто проверить, что процесс PostgreSQL запущен. Монитор проверяет наблюдаемую способность критичной зависимости **принять запись и вернуть её обратно**, формирует детерминированный CI signal, валидирует orchestration contract до merge и отделяет dependency health от alert-delivery health.
 
 Такой подход ближе к инженерии качества production-систем, чем обычный `ping` или port check.
 
