@@ -118,7 +118,7 @@ jobs:
           @echo off
           exit /b %MOCK_CURL_EXIT%
           '@ | Set-Content -Encoding ascii .qa-test-bin/curl.cmd
-          ".qa-test-bin" | Resolve-Path | ForEach-Object { "${_};${env:PATH}" } | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8
+          (Resolve-Path .qa-test-bin).Path | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Verify monitor exit-code contract
         shell: pwsh
