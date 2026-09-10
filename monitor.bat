@@ -17,11 +17,12 @@ if "%NOTIFY_ENABLED%"=="0" (
 set "EXPECTED_STATUS=Build #%BUILD_NUMBER% - OK"
 set "READBACK_FILE=%TEMP%\qa-monitor-readback-%RANDOM%-%RANDOM%.txt"
 
-REM The PostgreSQL persisted write/read check is the source of truth for this script.
-docker exec "%DB_CONTAINER%" psql -U postgres -v ON_ERROR_STOP=1 -c "INSERT INTO robot_log (status) VALUES ('%EXPECTED_STATUS%');"
+REM CALL keeps control in this script when CI substitutes .cmd command doubles.
+REM With real docker.exe/curl.exe it preserves the same command semantics.
+call docker exec "%DB_CONTAINER%" psql -U postgres -v ON_ERROR_STOP=1 -c "INSERT INTO robot_log (status) VALUES ('%EXPECTED_STATUS%');"
 if errorlevel 1 goto :database_failure
 
-docker exec "%DB_CONTAINER%" psql -U postgres -v ON_ERROR_STOP=1 -Atc "SELECT status FROM robot_log ORDER BY id DESC LIMIT 1;" > "%READBACK_FILE%"
+call docker exec "%DB_CONTAINER%" psql -U postgres -v ON_ERROR_STOP=1 -Atc "SELECT status FROM robot_log ORDER BY id DESC LIMIT 1;" > "%READBACK_FILE%"
 if errorlevel 1 goto :database_failure
 
 REM PowerShell performs an exact trimmed comparison and returns a machine-readable exit code.
@@ -33,11 +34,11 @@ echo INFO: Verified persisted PostgreSQL status "%EXPECTED_STATUS%".
 
 REM Notification transport is auxiliary and must not change a healthy DB result.
 if "%NOTIFY_ENABLED%"=="1" (
-    curl --fail --silent --show-error --connect-timeout 10 --max-time 20 -X POST "https://api.telegram.org/bot%TOKEN%/sendMessage" -d "chat_id=%CHAT_ID%" --data-urlencode "text=✅ Build #%BUILD_NUMBER% passed: PostgreSQL write/read health check succeeded." || echo WARNING: Telegram success notification could not be delivered.
+    call curl --fail --silent --show-error --connect-timeout 10 --max-time 20 -X POST "https://api.telegram.org/bot%TOKEN%/sendMessage" -d "chat_id=%CHAT_ID%" --data-urlencode "text=✅ Build #%BUILD_NUMBER% passed: PostgreSQL write/read health check succeeded." || echo WARNING: Telegram success notification could not be delivered.
 )
 
 REM Retention cleanup is best-effort and must not overwrite the health signal.
-docker exec "%DB_CONTAINER%" psql -U postgres -v ON_ERROR_STOP=1 -c "DELETE FROM robot_log WHERE visit_time < NOW() - INTERVAL '1 day';" || echo WARNING: PostgreSQL retention cleanup could not be completed.
+call docker exec "%DB_CONTAINER%" psql -U postgres -v ON_ERROR_STOP=1 -c "DELETE FROM robot_log WHERE visit_time < NOW() - INTERVAL '1 day';" || echo WARNING: PostgreSQL retention cleanup could not be completed.
 
 endlocal
 exit /b 0
@@ -45,7 +46,7 @@ exit /b 0
 :database_failure
 del /q "%READBACK_FILE%" >nul 2>&1
 if "%NOTIFY_ENABLED%"=="1" (
-    curl --fail --silent --show-error --connect-timeout 10 --max-time 20 -X POST "https://api.telegram.org/bot%TOKEN%/sendMessage" -d "chat_id=%CHAT_ID%" --data-urlencode "text=🚨 Build #%BUILD_NUMBER% failed: PostgreSQL write/read health check is unavailable." || echo WARNING: Telegram failure notification could not be delivered.
+    call curl --fail --silent --show-error --connect-timeout 10 --max-time 20 -X POST "https://api.telegram.org/bot%TOKEN%/sendMessage" -d "chat_id=%CHAT_ID%" --data-urlencode "text=🚨 Build #%BUILD_NUMBER% failed: PostgreSQL write/read health check is unavailable." || echo WARNING: Telegram failure notification could not be delivered.
 )
 endlocal
 exit /b 1
