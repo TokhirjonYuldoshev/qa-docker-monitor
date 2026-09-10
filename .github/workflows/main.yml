@@ -48,10 +48,18 @@ jobs:
           PGPASSWORD: qa_monitor_password
         run: |
           set -euo pipefail
+          RUN_MARKER="GitHub Cloud Test - ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           psql -h localhost -U postgres -v ON_ERROR_STOP=1 -c \
             "CREATE TABLE IF NOT EXISTS robot_log (id SERIAL PRIMARY KEY, status TEXT, visit_time TIMESTAMP DEFAULT NOW());"
           psql -h localhost -U postgres -v ON_ERROR_STOP=1 -c \
-            "INSERT INTO robot_log (status) VALUES ('GitHub Cloud Test - OK');"
+            "INSERT INTO robot_log (status) VALUES ('${RUN_MARKER}');"
+          MATCH_COUNT="$(psql -h localhost -U postgres -v ON_ERROR_STOP=1 -Atc \
+            "SELECT count(*) FROM robot_log WHERE status = '${RUN_MARKER}';")"
+          if [[ "$MATCH_COUNT" != "1" ]]; then
+            echo "Expected exactly one persisted health marker, got: $MATCH_COUNT" >&2
+            exit 1
+          fi
+          echo "Verified persisted PostgreSQL marker: ${RUN_MARKER}"
 
       - name: Publish health summary
         if: always()
@@ -72,10 +80,10 @@ jobs:
             echo "## PostgreSQL write health"
             echo
             echo "- Результат: **$(status_ru "${HEALTH_OUTCOME:-not-run}")**"
-            echo "- Проверка: readiness + реальный SQL CREATE/INSERT"
+            echo "- Проверка: readiness + SQL CREATE/INSERT + read-back assertion"
             echo "- Trigger: ${EVENT_NAME}"
             echo "- Schedule: 09:00 и 21:00 UTC"
-            echo "- Source of truth: PostgreSQL write result"
+            echo "- Source of truth: persisted PostgreSQL write/read result"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Enforce database health result
