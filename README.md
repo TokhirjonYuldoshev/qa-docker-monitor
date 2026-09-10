@@ -1,5 +1,7 @@
 # Hybrid QA Monitoring System
 
+[![QA Database Health Monitor](https://github.com/TokhirjonYuldoshev/qa-docker-monitor/actions/workflows/main.yml/badge.svg)](https://github.com/TokhirjonYuldoshev/qa-docker-monitor/actions/workflows/main.yml)
+
 Automated PostgreSQL health checks with **GitHub Actions**, **Docker**, **Jenkins-compatible Windows monitoring** and **Telegram alerts**.
 
 ## What this project demonstrates
@@ -8,7 +10,8 @@ Automated PostgreSQL health checks with **GitHub Actions**, **Docker**, **Jenkin
 - PostgreSQL service container with readiness health check;
 - SQL write validation instead of a superficial port-only check;
 - manual and push-triggered cloud runs;
-- Telegram notifications for success and failure;
+- explicit separation between the **health signal** and the **notification channel**;
+- GitHub Actions run summary with the health-check outcome;
 - local Windows monitoring script intended for Jenkins execution;
 - credentials passed through CI/Jenkins secret storage rather than committed to the repository.
 
@@ -18,7 +21,9 @@ Automated PostgreSQL health checks with **GitHub Actions**, **Docker**, **Jenkin
 flowchart LR
     GH[GitHub Actions] --> PG1[PostgreSQL service container]
     GH --> SQL1[CREATE TABLE + INSERT health check]
-    SQL1 --> TG1[Telegram result]
+    SQL1 --> R[Health result]
+    R --> TG1[Telegram notification]
+    R --> S[GitHub Actions summary]
 
     J[Jenkins / Windows] --> BAT[monitor.bat]
     BAT --> PG2[Persistent Docker PostgreSQL]
@@ -35,14 +40,26 @@ Triggers:
 - manual `workflow_dispatch`;
 - schedule at **09:00 and 21:00 UTC** every day.
 
-The GitHub runner starts a PostgreSQL service container, waits for its health check, installs the PostgreSQL client and performs a real SQL write operation:
+The GitHub runner starts a PostgreSQL service container, waits for its readiness health check, installs the PostgreSQL client and performs a real SQL write operation:
 
 ```sql
 CREATE TABLE IF NOT EXISTS robot_log (...);
 INSERT INTO robot_log (status) VALUES ('GitHub Cloud Test - OK');
 ```
 
-A successful or failed check is then reported to Telegram through repository secrets.
+The repository itself does not need to be checked out for this self-contained health probe, so the workflow avoids an unnecessary checkout step.
+
+## Failure semantics
+
+The **database write check is the source of truth** for the monitoring result.
+
+- readiness/setup/SQL failure produces a failed workflow;
+- the result is written to the GitHub Actions job summary;
+- Telegram success/failure delivery is attempted as an auxiliary observability channel;
+- a Telegram transport problem does not convert a healthy PostgreSQL check into a false database failure;
+- notification steps do not hide a real database failure.
+
+This separation keeps monitoring semantics clear: **product/dependency health** and **alert delivery health** are related, but they are not the same signal.
 
 ## Local / Jenkins-compatible monitor
 
@@ -66,7 +83,7 @@ No bot token or chat ID is stored in the repository.
 | Local automation | Jenkins / Windows batch |
 | Database | PostgreSQL |
 | Containerization | Docker |
-| Validation | SQL health check |
+| Validation | SQL write health check |
 | Notifications | Telegram Bot API |
 
 ## Repository structure
@@ -82,7 +99,7 @@ qa-docker-monitor/
 
 ## Why this is a QA project
 
-The goal is not only to keep a process alive. The monitor verifies an observable product dependency — database availability **and write capability** — and produces a repeatable CI signal with failure notification.
+The goal is not only to keep a process alive. The monitor verifies an observable product dependency — database availability **and write capability** — and produces a repeatable CI signal with explicit failure semantics and auxiliary alerting.
 
 ---
 
