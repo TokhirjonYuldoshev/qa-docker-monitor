@@ -24,12 +24,9 @@ if errorlevel 1 goto :database_failure
 docker exec "%DB_CONTAINER%" psql -U postgres -v ON_ERROR_STOP=1 -Atc "SELECT status FROM robot_log ORDER BY id DESC LIMIT 1;" > "%READBACK_FILE%"
 if errorlevel 1 goto :database_failure
 
-REM Require an exact persisted value; command success alone is not enough.
-findstr /x /l /c:"%EXPECTED_STATUS%" "%READBACK_FILE%" >nul
-if errorlevel 1 (
-    echo ERROR: PostgreSQL read-back did not match the expected build status.
-    goto :database_failure
-)
+REM PowerShell performs an exact trimmed comparison and returns a machine-readable exit code.
+powershell.exe -NoLogo -NoProfile -NonInteractive -Command "$actual = (Get-Content -LiteralPath $env:READBACK_FILE -Raw).Trim(); if ($actual -cne $env:EXPECTED_STATUS) { Write-Error ('Read-back mismatch. Expected: ' + $env:EXPECTED_STATUS + '; actual: ' + $actual); exit 1 }"
+if errorlevel 1 goto :database_failure
 
 del /q "%READBACK_FILE%" >nul 2>&1
 echo INFO: Verified persisted PostgreSQL status "%EXPECTED_STATUS%".
