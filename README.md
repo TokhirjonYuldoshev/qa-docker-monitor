@@ -18,7 +18,7 @@ Portfolio-проект по инженерному мониторингу кач
 - Telegram observability с прямой ссылкой на run;
 - manual-only Telegram diagnostics: `getMe` → `getChat` → `sendMessage`;
 - controlled Dependabot maintenance;
-- security/QA governance через `SECURITY.md`, `CODEOWNERS` и PR template.
+- security/QA governance через `SECURITY.md`, `CONTRIBUTING.md`, `CODEOWNERS` и PR template.
 
 ## Архитектура
 
@@ -178,10 +178,15 @@ qa-docker-monitor/
 │   └── workflows/
 │       ├── main.yml
 │       └── telegram-test.yml
+├── .gitattributes
+├── .gitignore
+├── CONTRIBUTING.md
 ├── SECURITY.md
 ├── monitor.bat
 └── README.md
 ```
+
+`CONTRIBUTING.md` фиксирует change policy и validation expectations для monitoring logic, а `SECURITY.md` описывает работу с секретами и порядок обработки security findings.
 
 ## Почему это QA-проект
 
