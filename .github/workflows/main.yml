@@ -1,4 +1,5 @@
 name: QA Database Health Monitor
+run-name: "QA Database Health Monitor • ${{ github.head_ref || github.ref_name }} • ${{ github.actor }}"
 
 on:
   pull_request:
@@ -52,52 +53,29 @@ jobs:
           psql -h localhost -U postgres -v ON_ERROR_STOP=1 -c \
             "INSERT INTO robot_log (status) VALUES ('GitHub Cloud Test - OK');"
 
-      - name: Send success notification to Telegram
-        if: ${{ always() && github.event_name != 'pull_request' && steps.database_check.outcome == 'success' }}
-        continue-on-error: true
-        env:
-          TG_TOKEN: ${{ secrets.TG_TOKEN }}
-          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-        run: |
-          if [[ -z "$TG_TOKEN" || -z "$TG_CHAT_ID" ]]; then
-            echo "::notice::Telegram secrets are not configured; success notification skipped."
-            exit 0
-          fi
-          curl --fail-with-body --silent --show-error \
-            -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
-            -d "chat_id=${TG_CHAT_ID}" \
-            --data-urlencode "text=☁️ CLOUD: Success! PostgreSQL write health check passed."
-
-      - name: Send failure notification to Telegram
-        if: ${{ always() && github.event_name != 'pull_request' && steps.database_check.outcome != 'success' }}
-        continue-on-error: true
-        env:
-          TG_TOKEN: ${{ secrets.TG_TOKEN }}
-          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-        run: |
-          if [[ -z "$TG_TOKEN" || -z "$TG_CHAT_ID" ]]; then
-            echo "::notice::Telegram secrets are not configured; failure notification skipped."
-            exit 0
-          fi
-          curl --fail-with-body --silent --show-error \
-            -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
-            -d "chat_id=${TG_CHAT_ID}" \
-            --data-urlencode "text=🔥 CLOUD: ALERT! PostgreSQL write health check failed or could not run."
-
       - name: Publish health summary
         if: always()
         env:
           HEALTH_OUTCOME: ${{ steps.database_check.outcome }}
           EVENT_NAME: ${{ github.event_name }}
         run: |
+          status_ru() {
+            case "$1" in
+              success) echo "✅ Успешно" ;;
+              failure) echo "❌ Ошибка" ;;
+              cancelled) echo "⏹️ Отменено" ;;
+              skipped) echo "⏭️ Пропущено" ;;
+              *) echo "❔ ${1:-not-run}" ;;
+            esac
+          }
           {
-            echo "## PostgreSQL health check"
+            echo "## PostgreSQL write health"
             echo
-            echo "- Result: **${HEALTH_OUTCOME:-not-run}**"
-            echo "- Validation: PostgreSQL readiness + real SQL CREATE/INSERT"
+            echo "- Результат: **$(status_ru "${HEALTH_OUTCOME:-not-run}")**"
+            echo "- Проверка: readiness + реальный SQL CREATE/INSERT"
             echo "- Trigger: ${EVENT_NAME}"
-            echo "- Schedule: 09:00 and 21:00 UTC"
-            echo "- Telegram: auxiliary notification channel; skipped for pull requests"
+            echo "- Schedule: 09:00 и 21:00 UTC"
+            echo "- Source of truth: PostgreSQL write result"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Enforce database health result
@@ -178,7 +156,7 @@ jobs:
           - DB success + Telegram disabled: **exit 0**
           - DB success + Telegram failure: **exit 0**
           - DB failure + Telegram failure: **exit 1**
-          - Health source of truth: **PostgreSQL write result**
+          - Source of truth: **PostgreSQL write result**
           '@ | Add-Content -Path $env:GITHUB_STEP_SUMMARY
 
   gate:
@@ -194,13 +172,41 @@ jobs:
           DATABASE_RESULT: ${{ needs.database-health.result }}
           WINDOWS_RESULT: ${{ needs.windows-contract.result }}
         run: |
-          {
-            echo "## Monitoring quality gate"
-            echo
-            echo "- PostgreSQL write health: **${DATABASE_RESULT}**"
-            echo "- Windows monitor contract: **${WINDOWS_RESULT}**"
-            echo "- Trigger: **${EVENT_NAME}**"
-          } >> "$GITHUB_STEP_SUMMARY"
+          status_ru() {
+            case "$1" in
+              success) echo "✅ Успешно" ;;
+              failure) echo "❌ Ошибка" ;;
+              cancelled) echo "⏹️ Отменено" ;;
+              skipped) echo "⏭️ Пропущено" ;;
+              *) echo "❔ ${1:-unknown}" ;;
+            esac
+          }
+
+          if [[ "$DATABASE_RESULT" == success && ( "$EVENT_NAME" == schedule || "$WINDOWS_RESULT" == success ) ]]; then
+            OVERALL="✅ МОНИТОРИНГ ИСПРАВЕН"
+          else
+            OVERALL="❌ МОНИТОРИНГ ТРЕБУЕТ ВНИМАНИЯ"
+          fi
+
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          BRANCH="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          # QA Database Health Monitor — итог
+
+          ## ${OVERALL}
+
+          | Сигнал | Статус |
+          | --- | --- |
+          | PostgreSQL write health | $(status_ru "$DATABASE_RESULT") |
+          | Windows monitor contract | $(status_ru "$WINDOWS_RESULT") |
+
+          **Trigger:** `${EVENT_NAME}` · **Ветка:** `${BRANCH}` · **Commit:** `${SHORT_SHA}`  
+          **Run:** [открыть GitHub Actions](${RUN_URL})
+
+          > ✈️ Telegram — вспомогательный observability channel. Он не может превратить исправную БД в ложный failure и не может скрыть реальную ошибку health check.
+          EOF
 
       - name: Enforce aggregate result
         env:
@@ -217,3 +223,109 @@ jobs:
             echo "Windows monitor contract finished with: $WINDOWS_RESULT" >&2
             exit 1
           fi
+
+  notify:
+    name: Telegram Notification
+    if: ${{ always() && github.event_name != 'pull_request' }}
+    needs: [database-health, windows-contract, gate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Send monitoring result to Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || secrets.TG_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || secrets.TG_CHAT_ID }}
+          DATABASE_RESULT: ${{ needs.database-health.result }}
+          WINDOWS_RESULT: ${{ needs.windows-contract.result }}
+          GATE_RESULT: ${{ needs.gate.result }}
+        run: |
+          if [[ -z "$TELEGRAM_BOT_TOKEN" || -z "$TELEGRAM_CHAT_ID" ]]; then
+            echo "::notice::Telegram secrets are not configured; notification skipped."
+            {
+              echo "## ✈️ Telegram"
+              echo
+              echo "ℹ️ Уведомление пропущено: настройте TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID; legacy TG_TOKEN / TG_CHAT_ID тоже поддерживаются."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          status_ru() {
+            case "$1" in
+              success) echo "✅ Успешно" ;;
+              failure) echo "❌ Ошибка" ;;
+              cancelled) echo "⏹️ Отменено" ;;
+              skipped) echo "⏭️ Пропущено" ;;
+              *) echo "❔ ${1:-unknown}" ;;
+            esac
+          }
+
+          event_ru() {
+            case "$1" in
+              push) echo "Push в main" ;;
+              workflow_dispatch) echo "Ручной запуск" ;;
+              schedule) echo "Плановый health check" ;;
+              *) echo "$1" ;;
+            esac
+          }
+
+          escape_html() {
+            local text="$1"
+            text="${text//&/&amp;}"
+            text="${text//</&lt;}"
+            text="${text//>/&gt;}"
+            printf '%s' "$text"
+          }
+
+          if [[ "$GATE_RESULT" == success ]]; then
+            HEADER="✅ <b>PostgreSQL Monitor — HEALTHY</b>"
+          else
+            HEADER="🚨 <b>PostgreSQL Monitor — ALERT</b>"
+          fi
+
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          REPO="$(escape_html "$GITHUB_REPOSITORY")"
+          BRANCH="$(escape_html "${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}")"
+          ACTOR="$(escape_html "$GITHUB_ACTOR")"
+          EVENT="$(escape_html "$(event_ru "$GITHUB_EVENT_NAME")")"
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+
+          MESSAGE="${HEADER}"
+          MESSAGE+=$'\n\n'"🗄️ <b>База:</b> PostgreSQL 16"
+          MESSAGE+=$'\n'"📦 <b>Репозиторий:</b> <code>${REPO}</code>"
+          MESSAGE+=$'\n'"🌿 <b>Ветка:</b> <code>${BRANCH}</code>"
+          MESSAGE+=$'\n'"🔄 <b>Запуск:</b> ${EVENT}"
+          MESSAGE+=$'\n'"👤 <b>Автор:</b> <code>${ACTOR}</code>"
+          MESSAGE+=$'\n'"🔖 <b>Commit:</b> <code>${SHORT_SHA}</code>"
+          MESSAGE+=$'\n\n'"🧪 <b>Сигналы</b>"
+          MESSAGE+=$'\n'"• PostgreSQL write health: $(status_ru "$DATABASE_RESULT")"
+          MESSAGE+=$'\n'"• Windows monitor contract: $(status_ru "$WINDOWS_RESULT")"
+          MESSAGE+=$'\n'"• Required gate: $(status_ru "$GATE_RESULT")"
+          MESSAGE+=$'\n\n'"🔗 <a href=\"${RUN_URL}\">Открыть GitHub Actions run #${GITHUB_RUN_NUMBER}</a>"
+
+          HTTP_CODE="$(curl --silent --show-error \
+            --connect-timeout 10 \
+            --max-time 20 \
+            --output /tmp/telegram-response.json \
+            --write-out '%{http_code}' \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "parse_mode=HTML" \
+            --data-urlencode "disable_web_page_preview=true" \
+            --data-urlencode "text=${MESSAGE}" \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" || true)"
+
+          if [[ "$HTTP_CODE" != "200" ]] || ! jq -e '.ok == true' /tmp/telegram-response.json >/dev/null 2>&1; then
+            echo "::warning::Telegram sendMessage failed (HTTP ${HTTP_CODE:-transport-error}). Monitoring result is preserved."
+            {
+              echo "## ✈️ Telegram"
+              echo
+              echo "⚠️ Health result сохранён, но Telegram transport не подтвердил доставку."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          {
+            echo "## ✈️ Telegram"
+            echo
+            echo "✅ Итог мониторинга отправлен в Telegram."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Telegram notification sent."
