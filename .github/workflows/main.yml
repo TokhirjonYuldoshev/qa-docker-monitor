@@ -158,6 +158,7 @@ jobs:
           Invoke-MonitorScenario -Name 'database-success-without-telegram' -DockerExit 0 -CurlExit 0 -EnableTelegram $false -ExpectedExit 0
           Invoke-MonitorScenario -Name 'database-success-notification-failure' -DockerExit 0 -CurlExit 1 -EnableTelegram $true -ExpectedExit 0
           Invoke-MonitorScenario -Name 'database-failure-notification-failure' -DockerExit 1 -CurlExit 1 -EnableTelegram $true -ExpectedExit 1
+          exit 0
 
       - name: Publish contract summary
         shell: pwsh
