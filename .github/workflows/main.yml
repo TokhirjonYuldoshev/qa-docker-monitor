@@ -1,6 +1,7 @@
 name: QA Database Health Monitor
 
 on:
+  pull_request:
   push:
     branches: [main]
   workflow_dispatch:
@@ -11,8 +12,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: qa-database-health-monitor
-  cancel-in-progress: false
+  group: qa-database-health-monitor-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   database-health:
@@ -52,7 +53,7 @@ jobs:
             "INSERT INTO robot_log (status) VALUES ('GitHub Cloud Test - OK');"
 
       - name: Send success notification to Telegram
-        if: ${{ always() && steps.database_check.outcome == 'success' }}
+        if: ${{ always() && github.event_name != 'pull_request' && steps.database_check.outcome == 'success' }}
         continue-on-error: true
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
@@ -64,7 +65,7 @@ jobs:
             --data-urlencode "text=☁️ CLOUD: Success! PostgreSQL write health check passed."
 
       - name: Send failure notification to Telegram
-        if: ${{ always() && steps.database_check.outcome != 'success' }}
+        if: ${{ always() && github.event_name != 'pull_request' && steps.database_check.outcome != 'success' }}
         continue-on-error: true
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
@@ -79,14 +80,16 @@ jobs:
         if: always()
         env:
           HEALTH_OUTCOME: ${{ steps.database_check.outcome }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           {
             echo "## PostgreSQL health check"
             echo
             echo "- Result: **${HEALTH_OUTCOME:-not-run}**"
             echo "- Validation: PostgreSQL readiness + real SQL CREATE/INSERT"
+            echo "- Trigger: ${EVENT_NAME}"
             echo "- Schedule: 09:00 and 21:00 UTC"
-            echo "- Telegram: auxiliary notification channel"
+            echo "- Telegram: auxiliary notification channel; skipped for pull requests"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Enforce database health result
