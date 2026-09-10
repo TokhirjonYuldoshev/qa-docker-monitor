@@ -7,9 +7,9 @@ Automated PostgreSQL health checks with **GitHub Actions**, **Docker**, **Jenkin
 ## What this project demonstrates
 
 - scheduled database health checks in GitHub Actions;
+- pre-merge validation of monitoring changes on pull requests;
 - PostgreSQL service container with readiness health check;
 - SQL write validation instead of a superficial port-only check;
-- manual and push-triggered cloud runs;
 - explicit separation between the **health signal** and the **notification channel**;
 - GitHub Actions run summary with the health-check outcome;
 - local Windows monitoring script intended for Jenkins execution;
@@ -36,8 +36,9 @@ Workflow: `.github/workflows/main.yml`
 
 Triggers:
 
-- push to `main`;
-- manual `workflow_dispatch`;
+- pull requests — validates the health-check workflow before merge, with Telegram notifications intentionally skipped;
+- push to `main` — runs the check and may send Telegram status;
+- manual `workflow_dispatch` — runs the check on demand;
 - schedule at **09:00 and 21:00 UTC** every day.
 
 The GitHub runner starts a PostgreSQL service container, waits for its readiness health check, installs the PostgreSQL client and performs a real SQL write operation:
@@ -55,7 +56,8 @@ The **database write check is the source of truth** for the monitoring result.
 
 - readiness/setup/SQL failure produces a failed workflow;
 - the result is written to the GitHub Actions job summary;
-- Telegram success/failure delivery is attempted as an auxiliary observability channel;
+- Telegram success/failure delivery is attempted as an auxiliary observability channel on operational runs;
+- pull-request validation never sends Telegram notifications;
 - a Telegram transport problem does not convert a healthy PostgreSQL check into a false database failure;
 - notification steps do not hide a real database failure.
 
@@ -99,7 +101,7 @@ qa-docker-monitor/
 
 ## Why this is a QA project
 
-The goal is not only to keep a process alive. The monitor verifies an observable product dependency — database availability **and write capability** — and produces a repeatable CI signal with explicit failure semantics and auxiliary alerting.
+The goal is not only to keep a process alive. The monitor verifies an observable product dependency — database availability **and write capability** — and produces a repeatable CI signal with pre-merge validation, explicit failure semantics and auxiliary alerting.
 
 ---
 
