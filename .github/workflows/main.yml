@@ -1,72 +1,77 @@
-name: Cloud QA Monitor 🚀
+name: QA Database Health Monitor
 
-# ТРИГГЕРЫ: Когда запускать?
 on:
   push:
-    branches: [ main ]          # Запуск при пуше в основную ветку
-  workflow_dispatch:           # Кнопка ручного запуска
+    branches: [main]
+  workflow_dispatch:
   schedule:
-    - cron: '0 9,21 * * *' # Будет присылать отчеты только 2 раза в день
+    - cron: "0 9,21 * * *"
 
-# Настройка окружения, чтобы убрать предупреждения о Node.js
+permissions:
+  contents: read
+
+concurrency:
+  group: qa-database-health-monitor
+  cancel-in-progress: false
+
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  test-database:
+  database-health:
+    name: PostgreSQL write health check
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
-    # Создаем временную базу данных для теста
     services:
       postgres:
-        image: postgres:latest
+        image: postgres:16-alpine
         env:
-          POSTGRES_PASSWORD: mysecretpassword
+          POSTGRES_PASSWORD: qa_monitor_password
         ports:
           - 5432:5432
-        # Проверка здоровья: ждем готовности
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U postgres"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
 
     steps:
-      - name: 📥 Скачиваем код из репозитория
-        uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v6
 
-      - name: ⏳ Страховочная пауза
-        run: sleep 10
-
-      - name: 🛠 Установка клиента Postgres
-        run: sudo apt-get install -y postgresql-client
-
-      - name: 🧪 ЗАПУСК ТЕСТА (SQL Insert)
-        env:
-          PGPASSWORD: mysecretpassword
+      - name: Install PostgreSQL client
         run: |
-          # 1. Создаем таблицу, если её нет
-          psql -h localhost -U postgres -c "CREATE TABLE IF NOT EXISTS robot_log (id SERIAL PRIMARY KEY, status TEXT, visit_time TIMESTAMP DEFAULT NOW());"
-          
-          # 2. Пробуем вставить данные
-          psql -h localhost -U postgres -c "INSERT INTO robot_log (status) VALUES ('GitHub Cloud Test - OK');"
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
 
-      - name: ✅ УСПЕХ - Отправка в Telegram
+      - name: Run SQL write health check
+        env:
+          PGPASSWORD: qa_monitor_password
+        run: |
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 -c \
+            "CREATE TABLE IF NOT EXISTS robot_log (id SERIAL PRIMARY KEY, status TEXT, visit_time TIMESTAMP DEFAULT NOW());"
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 -c \
+            "INSERT INTO robot_log (status) VALUES ('GitHub Cloud Test - OK');"
+
+      - name: Send success notification to Telegram
         if: success()
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: |
-          curl -s -X POST https://api.telegram.org/bot$TG_TOKEN/sendMessage \
-          -d chat_id=$TG_CHAT_ID \
-          -d text="☁️ CLOUD: Success! System is healthy."
+          curl --fail-with-body --silent --show-error \
+            -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+            -d "chat_id=${TG_CHAT_ID}" \
+            --data-urlencode "text=☁️ CLOUD: Success! PostgreSQL write health check passed."
 
-      - name: 🚨 ОШИБКА - Отправка в Telegram
+      - name: Send failure notification to Telegram
         if: failure()
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: |
-          curl -s -X POST https://api.telegram.org/bot$TG_TOKEN/sendMessage \
-          -d chat_id=$TG_CHAT_ID \
-          -d text="🔥 CLOUD: ALERT! Test failed. Database is down."
+          curl --fail-with-body --silent --show-error \
+            -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+            -d "chat_id=${TG_CHAT_ID}" \
+            --data-urlencode "text=🔥 CLOUD: ALERT! PostgreSQL write health check failed."

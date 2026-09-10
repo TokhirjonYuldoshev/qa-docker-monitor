@@ -1,3 +1,0 @@
-git add .
-git commit -m "Forcing GitHub Actions to wake up"
-git push origin main
