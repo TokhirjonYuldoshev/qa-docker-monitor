@@ -157,7 +157,7 @@ jobs:
           Invoke-MonitorScenario -Name 'database-success-without-telegram' -DockerExit 0 -DockerOutput $expectedStatus -CurlExit 0 -EnableTelegram $false -ExpectedExit 0
           Invoke-MonitorScenario -Name 'database-success-notification-failure' -DockerExit 0 -DockerOutput $expectedStatus -CurlExit 1 -EnableTelegram $true -ExpectedExit 0
           Invoke-MonitorScenario -Name 'database-readback-mismatch' -DockerExit 0 -DockerOutput 'unexpected persisted value' -CurlExit 0 -EnableTelegram $false -ExpectedExit 1
-          Invoke-MonitorScenario -Name 'database-failure-notification-failure' -DockerExit 1 -DockerOutput '' -CurlExit 1 -EnableTelegram $true -ExpectedExit 1
+          Invoke-MonitorScenario -Name 'database-failure-notification-failure' -DockerExit 1 -DockerOutput 'unused' -CurlExit 1 -EnableTelegram $true -ExpectedExit 1
           exit 0
 
       - name: Publish contract summary
