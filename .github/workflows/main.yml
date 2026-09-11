@@ -24,7 +24,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16.14-alpine3.24
+        image: postgres:16.15-alpine3.24
         env:
           POSTGRES_PASSWORD: qa_monitor_password
         ports:
@@ -41,7 +41,7 @@ jobs:
         continue-on-error: true
         env:
           PGPASSWORD: qa_monitor_password
-          POSTGRES_CLIENT_IMAGE: postgres:16.14-alpine3.24
+          POSTGRES_CLIENT_IMAGE: postgres:16.15-alpine3.24
         run: |
           set -euo pipefail
           RUN_MARKER="GitHub Cloud Test - ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
