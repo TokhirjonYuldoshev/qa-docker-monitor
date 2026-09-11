@@ -1,0 +1,49 @@
+name: Temporary gosu reachability probe
+
+on:
+  push:
+    branches:
+      - security/scan-postgres-image
+
+permissions:
+  contents: read
+
+jobs:
+  govulncheck-gosu:
+    name: Probe / gosu govulncheck binary
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      POSTGRES_IMAGE: postgres:16.15-alpine3.24
+    steps:
+      - name: Extract exact gosu binary from PostgreSQL image
+        run: |
+          set -euo pipefail
+          docker pull "$POSTGRES_IMAGE"
+          cid="$(docker create "$POSTGRES_IMAGE")"
+          trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          docker cp "$cid:/usr/local/bin/gosu" "$RUNNER_TEMP/gosu"
+          chmod +x "$RUNNER_TEMP/gosu"
+          "$RUNNER_TEMP/gosu" --version
+          sha256sum "$RUNNER_TEMP/gosu"
+
+      - name: Install pinned govulncheck
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin"
+          GOBIN="$RUNNER_TEMP/bin" go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+          "$RUNNER_TEMP/bin/govulncheck" -version
+
+      - name: Check compiled gosu vulnerability reachability
+        run: |
+          set -o pipefail
+          "$RUNNER_TEMP/bin/govulncheck" -mode=binary "$RUNNER_TEMP/gosu" | tee "$RUNNER_TEMP/govulncheck-gosu.txt"
+
+      - name: Upload reachability evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: gosu-govulncheck-${{ github.run_id }}
+          path: ${{ runner.temp }}/govulncheck-gosu.txt
+          if-no-files-found: warn
+          retention-days: 1
