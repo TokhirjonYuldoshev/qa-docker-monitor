@@ -135,6 +135,7 @@ jobs:
             $env:MOCK_DOCKER_OUTPUT = $DockerOutput
             $env:MOCK_CURL_EXIT = "$CurlExit"
             $env:BUILD_NUMBER = 'contract-test'
+            $env:RUN_TOKEN = 'contract'
             $env:DB_CONTAINER = 'qa-contract-postgres'
 
             if ($EnableTelegram) {
@@ -153,7 +154,7 @@ jobs:
             Write-Host "PASS: $Name -> exit $actualExit"
           }
 
-          $expectedStatus = 'Build #contract-test - OK'
+          $expectedStatus = 'Build #contract-test - OK [contract]'
           Invoke-MonitorScenario -Name 'database-success-without-telegram' -DockerExit 0 -DockerOutput $expectedStatus -CurlExit 0 -EnableTelegram $false -ExpectedExit 0
           Invoke-MonitorScenario -Name 'database-success-notification-failure' -DockerExit 0 -DockerOutput $expectedStatus -CurlExit 1 -EnableTelegram $true -ExpectedExit 0
           Invoke-MonitorScenario -Name 'database-readback-mismatch' -DockerExit 0 -DockerOutput 'unexpected persisted value' -CurlExit 0 -EnableTelegram $false -ExpectedExit 1
@@ -170,6 +171,7 @@ jobs:
           - DB write/read success + Telegram failure: **exit 0**
           - DB read-back mismatch: **exit 1**
           - DB command failure + Telegram failure: **exit 1**
+          - Read-back marker: **isolated per run**
           - Source of truth: **persisted PostgreSQL write/read result**
           '@ | Add-Content -Path $env:GITHUB_STEP_SUMMARY
 
