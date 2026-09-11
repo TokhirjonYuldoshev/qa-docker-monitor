@@ -65,6 +65,51 @@ jobs:
           fi
           echo "Verified persisted PostgreSQL marker: ${RUN_MARKER}"
 
+      - name: Write structured health evidence
+        if: always()
+        env:
+          HEALTH_OUTCOME: ${{ steps.database_check.outcome }}
+          EVENT_NAME: ${{ github.event_name }}
+          BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          jq -n \
+            --arg schema_version "1" \
+            --arg signal "postgresql-persisted-write-read" \
+            --arg outcome "${HEALTH_OUTCOME:-not-run}" \
+            --arg event "$EVENT_NAME" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg branch "$BRANCH_NAME" \
+            --arg commit "$GITHUB_SHA" \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg postgres_major "16" \
+            --arg check "readiness + CREATE + INSERT + exact per-run SELECT read-back" \
+            '{
+              schema_version: $schema_version,
+              signal: $signal,
+              outcome: $outcome,
+              event: $event,
+              repository: $repository,
+              branch: $branch,
+              commit: $commit,
+              run_id: $run_id,
+              run_attempt: $run_attempt,
+              postgres_major: $postgres_major,
+              check: $check
+            }' > reports/postgres-health.json
+          jq . reports/postgres-health.json
+
+      - name: Upload PostgreSQL health evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: postgres-health-${{ github.run_id }}
+          path: reports/postgres-health.json
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Publish health summary
         if: always()
         env:
@@ -86,6 +131,7 @@ jobs:
             echo "- Результат: **$(status_ru "${HEALTH_OUTCOME:-not-run}")**"
             echo "- Проверка: readiness + SQL CREATE/INSERT + read-back assertion"
             echo "- SQL client: PostgreSQL service image reused locally (no apt install)"
+            echo "- Evidence: \`postgres-health-${GITHUB_RUN_ID}\` JSON artifact (14 days)"
             echo "- Trigger: ${EVENT_NAME}"
             echo "- Schedule: 09:00 и 21:00 UTC"
             echo "- Source of truth: persisted PostgreSQL write/read result"
