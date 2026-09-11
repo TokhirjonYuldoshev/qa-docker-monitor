@@ -6,6 +6,8 @@ This repository treats PostgreSQL health as an observable contract rather than a
 
 A healthy monitoring run must prove that PostgreSQL can accept a write and that the marker created by the **current run** can be read back exactly. Notification delivery is secondary and must never overwrite the database-health result.
 
+The scheduled GitHub Actions path is a **synthetic canary against an ephemeral PostgreSQL service container**. It validates the monitoring contract and workflow implementation; it must not be described as proof of availability for an unrelated production or long-lived database. The separately managed Windows/Jenkins-compatible path has a different environment boundary. See `docs/monitoring-boundary.md`.
+
 ## Change policy
 
 - Keep one focused concern per pull request.
@@ -15,7 +17,8 @@ A healthy monitoring run must prove that PostgreSQL can accept a write and that 
 - Avoid arbitrary sleeps, rerun loops or retries that hide readiness/infrastructure problems.
 - Keep secrets out of the repository. Bot tokens, chat IDs and other credentials must come from GitHub/Jenkins secret stores.
 - Preserve explicit `ON_ERROR_STOP=1` semantics for PostgreSQL commands that define the health result.
-- Keep scheduled monitoring lightweight and deterministic.
+- Keep scheduled synthetic monitoring lightweight and deterministic.
+- Keep synthetic and separately managed environment claims explicit in documentation and incident analysis.
 - Update the relevant documentation when the monitoring contract, schedule or failure semantics change.
 
 ## Local Windows contract validation
@@ -61,7 +64,8 @@ A pull request is merge-ready when:
 4. `CI / Required gate` is green;
 5. changes to `monitor.bat` pass `tests/monitor-contract.ps1`;
 6. health-semantics changes explain which command/assertion remains the source of truth;
-7. no quality signal was weakened to obtain a green result.
+7. environment claims remain consistent with `docs/monitoring-boundary.md`;
+8. no quality signal was weakened to obtain a green result.
 
 For suspected runner/platform incidents, follow `docs/incident-runbook.md`. A targeted diagnostic rerun is justified only after concrete evidence of an external failure and recovery; rerun-until-green is not an accepted validation strategy.
 
