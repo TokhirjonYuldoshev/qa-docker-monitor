@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security report guidance
+    url: https://github.com/TokhirjonYuldoshev/qa-docker-monitor/blob/main/SECURITY.md
+    about: Review the security policy before reporting vulnerabilities or credential exposure.
