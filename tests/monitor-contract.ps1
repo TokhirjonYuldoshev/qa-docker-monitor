@@ -122,3 +122,8 @@ finally {
         Remove-Item "Env:$name" -ErrorAction SilentlyContinue
     }
 }
+
+# The final scenario intentionally returns exit 1 from monitor.bat. Reset the
+# process exit code only after every assertion above has passed; uncaught
+# assertion errors still propagate as a failing PowerShell process.
+exit 0
