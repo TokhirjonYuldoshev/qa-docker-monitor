@@ -36,12 +36,42 @@ jobs:
           version: v0.74.0
           scan-type: image
           image-ref: ${{ env.POSTGRES_IMAGE }}
+          scanners: vuln
           format: json
           output: reports/trivy-postgres.json
           severity: CRITICAL
           ignore-unfixed: 'true'
-          exit-code: '1'
+          exit-code: '0'
           timeout: 5m0s
+
+      - name: Extract exact gosu binary from PostgreSQL image
+        id: gosu_extract
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          cid="$(docker create "$POSTGRES_IMAGE")"
+          trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          docker cp "$cid:/usr/local/bin/gosu" "$RUNNER_TEMP/gosu"
+          chmod +x "$RUNNER_TEMP/gosu"
+          "$RUNNER_TEMP/gosu" --version | tee reports/gosu-version.txt
+          sha256sum "$RUNNER_TEMP/gosu" | tee reports/gosu-sha256.txt
+
+      - name: Install pinned govulncheck
+        id: govulncheck_install
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin"
+          GOBIN="$RUNNER_TEMP/bin" go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+          "$RUNNER_TEMP/bin/govulncheck" -version | tee reports/govulncheck-version.txt
+
+      - name: Check compiled gosu vulnerability reachability
+        id: gosu_reachability
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          "$RUNNER_TEMP/bin/govulncheck" -mode=binary "$RUNNER_TEMP/gosu" \
+            | tee reports/govulncheck-gosu.txt
 
       - name: Generate CycloneDX PostgreSQL image SBOM
         id: sbom_generation
@@ -51,10 +81,64 @@ jobs:
           version: v0.74.0
           scan-type: image
           image-ref: ${{ env.POSTGRES_IMAGE }}
+          scanners: vuln
           format: cyclonedx
           output: reports/postgres-sbom.cdx.json
           exit-code: '0'
           timeout: 5m0s
+
+      - name: Evaluate fixable critical findings
+        id: critical_policy
+        if: ${{ always() }}
+        env:
+          TRIVY_OUTCOME: ${{ steps.trivy_scan.outcome }}
+          GOSU_EXTRACT_OUTCOME: ${{ steps.gosu_extract.outcome }}
+          GOVULNCHECK_INSTALL_OUTCOME: ${{ steps.govulncheck_install.outcome }}
+          GOSU_REACHABILITY_OUTCOME: ${{ steps.gosu_reachability.outcome }}
+          SBOM_OUTCOME: ${{ steps.sbom_generation.outcome }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$TRIVY_OUTCOME" != 'success' ]]; then
+            echo "Trivy scan execution finished with outcome: $TRIVY_OUTCOME" >&2
+            exit 1
+          fi
+          if [[ "$GOSU_EXTRACT_OUTCOME" != 'success' || "$GOVULNCHECK_INSTALL_OUTCOME" != 'success' || "$GOSU_REACHABILITY_OUTCOME" != 'success' ]]; then
+            echo "gosu reachability evidence is incomplete." >&2
+            exit 1
+          fi
+          if [[ "$SBOM_OUTCOME" != 'success' ]]; then
+            echo "CycloneDX SBOM generation finished with outcome: $SBOM_OUTCOME" >&2
+            exit 1
+          fi
+          if [[ ! -s reports/trivy-postgres.json ]]; then
+            echo "Trivy JSON evidence is missing." >&2
+            exit 1
+          fi
+
+          RAW_CRITICAL_COUNT="$(jq '[.Results[]? | .Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' reports/trivy-postgres.json)"
+          GOSU_TLS_COUNT="$(jq '[.Results[]? as $result | ($result.Vulnerabilities // [])[] | select(.Severity == "CRITICAL" and .VulnerabilityID == "CVE-2025-68121" and $result.Target == "usr/local/bin/gosu")] | length' reports/trivy-postgres.json)"
+          OTHER_CRITICAL_COUNT="$(jq '[.Results[]? as $result | ($result.Vulnerabilities // [])[] | select(.Severity == "CRITICAL") | select(.VulnerabilityID != "CVE-2025-68121" or $result.Target != "usr/local/bin/gosu")] | length' reports/trivy-postgres.json)"
+
+          {
+            echo "raw_critical_count=$RAW_CRITICAL_COUNT"
+            echo "gosu_tls_count=$GOSU_TLS_COUNT"
+            echo "other_critical_count=$OTHER_CRITICAL_COUNT"
+          } >> "$GITHUB_OUTPUT"
+
+          if (( OTHER_CRITICAL_COUNT > 0 )); then
+            echo "Found $OTHER_CRITICAL_COUNT fixable CRITICAL finding(s) outside the reachability-qualified gosu TLS finding." >&2
+            jq -r '.Results[]? as $result | ($result.Vulnerabilities // [])[] | select(.Severity == "CRITICAL") | select(.VulnerabilityID != "CVE-2025-68121" or $result.Target != "usr/local/bin/gosu") | "- \(.VulnerabilityID) target=\($result.Target) package=\(.PkgName) installed=\(.InstalledVersion) fixed=\(.FixedVersion)"' reports/trivy-postgres.json >&2
+            exit 1
+          fi
+
+          if (( GOSU_TLS_COUNT > 0 )); then
+            if ! grep -Fq 'Your code is affected by 0 vulnerabilities.' reports/govulncheck-gosu.txt; then
+              echo "Trivy reported CVE-2025-68121 in gosu, but govulncheck did not prove zero affected vulnerabilities." >&2
+              exit 1
+            fi
+            echo "CVE-2025-68121 is present in gosu compiler metadata but not reachable in the exact binary according to govulncheck."
+          fi
 
       - name: Upload PostgreSQL vulnerability evidence
         if: ${{ always() }}
@@ -62,7 +146,20 @@ jobs:
         with:
           name: postgres-trivy-critical-${{ github.run_id }}
           path: reports/trivy-postgres.json
-          if-no-files-found: warn
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload gosu reachability evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: gosu-reachability-${{ github.run_id }}
+          path: |
+            reports/gosu-version.txt
+            reports/gosu-sha256.txt
+            reports/govulncheck-version.txt
+            reports/govulncheck-gosu.txt
+          if-no-files-found: error
           retention-days: 14
 
       - name: Upload PostgreSQL CycloneDX SBOM
@@ -71,45 +168,33 @@ jobs:
         with:
           name: postgres-sbom-${{ github.run_id }}
           path: reports/postgres-sbom.cdx.json
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
 
       - name: Publish PostgreSQL image security summary
         if: ${{ always() }}
         env:
-          TRIVY_OUTCOME: ${{ steps.trivy_scan.outcome }}
-          SBOM_OUTCOME: ${{ steps.sbom_generation.outcome }}
+          POLICY_OUTCOME: ${{ steps.critical_policy.outcome }}
+          RAW_CRITICAL_COUNT: ${{ steps.critical_policy.outputs.raw_critical_count }}
+          GOSU_TLS_COUNT: ${{ steps.critical_policy.outputs.gosu_tls_count }}
+          OTHER_CRITICAL_COUNT: ${{ steps.critical_policy.outputs.other_critical_count }}
+          GOSU_REACHABILITY_OUTCOME: ${{ steps.gosu_reachability.outcome }}
         run: |
-          set -u
-          if [[ -s reports/trivy-postgres.json ]]; then
-            CRITICAL_COUNT="$(jq '[.Results[]? | .Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' reports/trivy-postgres.json)"
-          else
-            CRITICAL_COUNT="unavailable"
-          fi
           {
             echo "## PostgreSQL image security evidence"
             echo
             echo "- Image: \`${POSTGRES_IMAGE}\`"
-            echo "- Policy: fixable CRITICAL vulnerabilities are blocking"
-            echo "- Scanner outcome: **${TRIVY_OUTCOME:-not-run}**"
-            echo "- Reported CRITICAL findings: **${CRITICAL_COUNT}**"
-            echo "- Vulnerability evidence: \`postgres-trivy-critical-${GITHUB_RUN_ID}\` artifact (14 days)"
-            echo "- SBOM generation: **${SBOM_OUTCOME:-not-run}**"
-            echo "- Supply-chain evidence: \`postgres-sbom-${GITHUB_RUN_ID}\` CycloneDX artifact (14 days)"
+            echo "- Policy: all fixable CRITICAL findings block unless the exact gosu binary is proven unaffected by binary-mode govulncheck"
+            echo "- Raw Trivy CRITICAL findings: **${RAW_CRITICAL_COUNT:-unavailable}**"
+            echo "- Reachability-qualified gosu TLS findings: **${GOSU_TLS_COUNT:-unavailable}**"
+            echo "- Other blocking CRITICAL findings: **${OTHER_CRITICAL_COUNT:-unavailable}**"
+            echo "- gosu binary reachability check: **${GOSU_REACHABILITY_OUTCOME:-not-run}**"
+            echo "- Policy evaluation: **${POLICY_OUTCOME:-not-run}**"
+            echo "- Evidence: Trivy JSON + gosu govulncheck + CycloneDX SBOM artifacts retained for 14 days"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Enforce PostgreSQL image security result
-        if: ${{ always() }}
-        env:
-          TRIVY_OUTCOME: ${{ steps.trivy_scan.outcome }}
-          SBOM_OUTCOME: ${{ steps.sbom_generation.outcome }}
+        if: ${{ always() && steps.critical_policy.outcome != 'success' }}
         run: |
-          set -euo pipefail
-          if [[ "$TRIVY_OUTCOME" != 'success' ]]; then
-            echo "PostgreSQL image Trivy scan finished with outcome: $TRIVY_OUTCOME" >&2
-            exit 1
-          fi
-          if [[ "$SBOM_OUTCOME" != 'success' ]]; then
-            echo "PostgreSQL image CycloneDX SBOM generation finished with outcome: $SBOM_OUTCOME" >&2
-            exit 1
-          fi
+          echo "PostgreSQL image security policy did not succeed." >&2
+          exit 1
