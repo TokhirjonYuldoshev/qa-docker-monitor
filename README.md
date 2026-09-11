@@ -18,7 +18,8 @@ Portfolio-проект по инженерному мониторингу кач
 - Telegram observability с прямой ссылкой на run;
 - manual-only Telegram diagnostics: `getMe` → `getChat` → `sendMessage`;
 - controlled Dependabot maintenance;
-- security/QA governance через `SECURITY.md`, `CONTRIBUTING.md`, `CODEOWNERS` и PR template.
+- security/QA governance через `SECURITY.md`, `CONTRIBUTING.md`, `CODEOWNERS` и PR template;
+- operational incident response через [`docs/incident-runbook.md`](docs/incident-runbook.md) и structured monitoring-incident issue form.
 
 ## Архитектура
 
@@ -89,6 +90,19 @@ Health считается успешным только если SQL-коман�
 
 GitHub Actions Summary показывает общий итог, trigger, branch, commit и прямую ссылку на run.
 
+## Operational incident response
+
+[`docs/incident-runbook.md`](docs/incident-runbook.md) определяет triage по владельцу сигнала:
+
+- PostgreSQL persisted write/read health — основной operational source of truth;
+- Windows monitor contract — source of truth для exit-code/orchestration semantics;
+- `CI / Required gate` — агрегатор, но не замена upstream evidence;
+- Telegram — non-blocking observability transport.
+
+Runbook фиксирует порядок triage, severity model, exit criteria и anti-patterns. Для suspected runner/platform incidents допускается максимум **один targeted diagnostic rerun** после конкретного evidence, что external condition восстановился. Повторные rerun-until-green loops, произвольные sleeps и masking notification logic запрещены.
+
+`.github/ISSUE_TEMPLATE/monitoring_incident.yml` превращает эти правила в operational issue contract: при регистрации incident нужно указать owning signal, severity, revision, observed/expected behavior, evidence, reproducibility и impact и подтвердить, что секреты и masking-workarounds не добавлялись.
+
 ## Telegram observability
 
 Telegram вынесен в отдельный job после quality gate. Сообщение содержит:
@@ -120,7 +134,7 @@ Notification transport — **вспомогательный observability signal
 
 ## Локальный / Jenkins-compatible monitor
 
-`monitor.bat` теперь проверяет не только успешность `INSERT`, но и persisted state. После записи статуса текущего Jenkins build скрипт читает последнюю запись обратно и сравнивает её с ожидаемым значением.
+`monitor.bat` проверяет не только успешность `INSERT`, но и persisted state. После записи статуса текущего Jenkins build скрипт читает последнюю запись обратно и сравнивает её с ожидаемым значением.
 
 Локальный health считается успешным только при совпадении read-back. Ошибка команды, ошибка чтения или mismatch возвращают exit code `1`.
 
@@ -145,7 +159,8 @@ Telegram delivery и retention cleanup выполняются best-effort и н�
 - notification failure не скрывает реальную ошибку БД;
 - PR validation не отправляет operational Telegram alerts;
 - aggregate gate не может стать зелёным, если обязательный validation job упал;
-- Windows contract защищает эти правила от регрессии.
+- Windows contract защищает эти правила от регрессии;
+- incident runbook не допускает rerun-until-green или sleep/retry masking.
 
 ## Dependency maintenance
 
@@ -166,6 +181,7 @@ Minor/patch updates группируются, major updates остаются о�
 | Merge signal | `CI / Required gate` |
 | Notifications | Telegram Bot API |
 | Dependency maintenance | Dependabot |
+| Incident response | Runbook + structured Issue Form |
 
 ## Структура репозитория
 
@@ -174,10 +190,14 @@ qa-docker-monitor/
 ├── .github/
 │   ├── CODEOWNERS
 │   ├── dependabot.yml
+│   ├── ISSUE_TEMPLATE/
+│   │   └── monitoring_incident.yml
 │   ├── pull_request_template.md
 │   └── workflows/
 │       ├── main.yml
 │       └── telegram-test.yml
+├── docs/
+│   └── incident-runbook.md
 ├── .gitattributes
 ├── .gitignore
 ├── CONTRIBUTING.md
@@ -186,11 +206,11 @@ qa-docker-monitor/
 └── README.md
 ```
 
-`CONTRIBUTING.md` фиксирует change policy и validation expectations для monitoring logic, а `SECURITY.md` описывает работу с секретами и порядок обработки security findings.
+`CONTRIBUTING.md` фиксирует change policy и validation expectations для monitoring logic, `SECURITY.md` описывает работу с секретами и порядок обработки security findings, а incident runbook + issue form задают единый operational triage contract.
 
 ## Почему это QA-проект
 
-Задача проекта — не просто проверить, что процесс PostgreSQL запущен. Монитор проверяет наблюдаемую способность критичной зависимости **принять запись и вернуть ожидаемое состояние обратно**, формирует детерминированный CI signal, валидирует orchestration contract до merge и отделяет dependency health от alert-delivery health.
+Задача проекта — не просто проверить, что процесс PostgreSQL запущен. Монитор проверяет наблюдаемую способность критичной зависимости **принять запись и вернуть ожидаемое состояние обратно**, формирует детерминированный CI signal, валидирует orchestration contract до merge, отделяет dependency health от alert-delivery health и формализует incident response.
 
 Такой подход ближе к инженерии качества production-систем, чем обычный `ping` или port check.
 
