@@ -25,7 +25,8 @@ Deleting a committed secret is not sufficient by itself because Git history may 
 - `monitor.bat` expects Telegram values from its runtime/Jenkins environment and still evaluates database health when notifications are disabled;
 - PostgreSQL write success/failure is kept separate from Telegram transport outcome;
 - the Windows contract job verifies that observability failures cannot overwrite the database-health exit signal;
-- the pinned PostgreSQL CI image has an independent Trivy gate for fixable CRITICAL vulnerabilities plus retained CycloneDX SBOM evidence;
+- the pinned PostgreSQL CI image has independent Trivy CRITICAL evidence and a retained CycloneDX SBOM;
+- fixable CRITICAL findings remain blocking unless a compiler-level `gosu` finding is proven non-reachable on the exact extracted binary by pinned binary-mode `govulncheck`; all reachability evidence is retained with the scan;
 - `CI / Required gate` aggregates the validation paths without hiding their independent results;
 - the workflow uses an ephemeral PostgreSQL service credential for CI only; it is not a production secret.
 
