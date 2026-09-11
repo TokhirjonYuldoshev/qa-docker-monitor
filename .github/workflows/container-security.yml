@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      POSTGRES_IMAGE: postgres:16.14-alpine3.24
+      POSTGRES_IMAGE: postgres:16.15-alpine3.24
 
     steps:
       - name: Prepare security evidence directory
