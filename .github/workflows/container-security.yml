@@ -1,0 +1,115 @@
+name: PostgreSQL Image Security
+run-name: "PostgreSQL Image Security • ${{ github.head_ref || github.ref_name }} • ${{ github.actor }}"
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: "30 3 * * 0"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: postgres-image-security-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  postgres-image-security:
+    name: Security / PostgreSQL image
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      POSTGRES_IMAGE: postgres:16.14-alpine3.24
+
+    steps:
+      - name: Prepare security evidence directory
+        run: mkdir -p reports
+
+      - name: Scan PostgreSQL image for fixable critical vulnerabilities
+        id: trivy_scan
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.74.0
+          scan-type: image
+          image-ref: ${{ env.POSTGRES_IMAGE }}
+          format: json
+          output: reports/trivy-postgres.json
+          severity: CRITICAL
+          ignore-unfixed: 'true'
+          exit-code: '1'
+          timeout: 5m0s
+
+      - name: Generate CycloneDX PostgreSQL image SBOM
+        id: sbom_generation
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.74.0
+          scan-type: image
+          image-ref: ${{ env.POSTGRES_IMAGE }}
+          format: cyclonedx
+          output: reports/postgres-sbom.cdx.json
+          exit-code: '0'
+          timeout: 5m0s
+
+      - name: Upload PostgreSQL vulnerability evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: postgres-trivy-critical-${{ github.run_id }}
+          path: reports/trivy-postgres.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload PostgreSQL CycloneDX SBOM
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: postgres-sbom-${{ github.run_id }}
+          path: reports/postgres-sbom.cdx.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Publish PostgreSQL image security summary
+        if: ${{ always() }}
+        env:
+          TRIVY_OUTCOME: ${{ steps.trivy_scan.outcome }}
+          SBOM_OUTCOME: ${{ steps.sbom_generation.outcome }}
+        run: |
+          set -u
+          if [[ -s reports/trivy-postgres.json ]]; then
+            CRITICAL_COUNT="$(jq '[.Results[]? | .Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' reports/trivy-postgres.json)"
+          else
+            CRITICAL_COUNT="unavailable"
+          fi
+          {
+            echo "## PostgreSQL image security evidence"
+            echo
+            echo "- Image: \`${POSTGRES_IMAGE}\`"
+            echo "- Policy: fixable CRITICAL vulnerabilities are blocking"
+            echo "- Scanner outcome: **${TRIVY_OUTCOME:-not-run}**"
+            echo "- Reported CRITICAL findings: **${CRITICAL_COUNT}**"
+            echo "- Vulnerability evidence: \`postgres-trivy-critical-${GITHUB_RUN_ID}\` artifact (14 days)"
+            echo "- SBOM generation: **${SBOM_OUTCOME:-not-run}**"
+            echo "- Supply-chain evidence: \`postgres-sbom-${GITHUB_RUN_ID}\` CycloneDX artifact (14 days)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Enforce PostgreSQL image security result
+        if: ${{ always() }}
+        env:
+          TRIVY_OUTCOME: ${{ steps.trivy_scan.outcome }}
+          SBOM_OUTCOME: ${{ steps.sbom_generation.outcome }}
+        run: |
+          set -euo pipefail
+          if [[ "$TRIVY_OUTCOME" != 'success' ]]; then
+            echo "PostgreSQL image Trivy scan finished with outcome: $TRIVY_OUTCOME" >&2
+            exit 1
+          fi
+          if [[ "$SBOM_OUTCOME" != 'success' ]]; then
+            echo "PostgreSQL image CycloneDX SBOM generation finished with outcome: $SBOM_OUTCOME" >&2
+            exit 1
+          fi
