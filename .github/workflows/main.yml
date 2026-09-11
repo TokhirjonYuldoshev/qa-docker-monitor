@@ -107,6 +107,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path .qa-test-bin | Out-Null
           @'
           @echo off
+          if defined MOCK_DOCKER_LOG echo %*>>"%MOCK_DOCKER_LOG%"
           if defined MOCK_DOCKER_OUTPUT echo %MOCK_DOCKER_OUTPUT%
           exit /b %MOCK_DOCKER_EXIT%
           '@ | Set-Content -Encoding ascii .qa-test-bin/docker.cmd
@@ -120,6 +121,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          $dockerLog = Join-Path $env:RUNNER_TEMP 'monitor-docker-calls.log'
+          $env:MOCK_DOCKER_LOG = $dockerLog
 
           function Invoke-MonitorScenario {
             param(
@@ -155,7 +158,16 @@ jobs:
           }
 
           $expectedStatus = 'Build #contract-test - OK [contract]'
+          Remove-Item -LiteralPath $dockerLog -ErrorAction SilentlyContinue
           Invoke-MonitorScenario -Name 'database-success-without-telegram' -DockerExit 0 -DockerOutput $expectedStatus -CurlExit 0 -EnableTelegram $false -ExpectedExit 0
+
+          $dockerCalls = Get-Content -LiteralPath $dockerLog -Raw
+          $expectedReadBackFilter = "WHERE status = '$expectedStatus'"
+          if (-not $dockerCalls.Contains($expectedReadBackFilter)) {
+            throw "Windows monitor did not query its exact per-run marker. Expected docker call to contain: $expectedReadBackFilter"
+          }
+          Write-Host 'PASS: read-back query targets the exact per-run marker'
+
           Invoke-MonitorScenario -Name 'database-success-notification-failure' -DockerExit 0 -DockerOutput $expectedStatus -CurlExit 1 -EnableTelegram $true -ExpectedExit 0
           Invoke-MonitorScenario -Name 'database-readback-mismatch' -DockerExit 0 -DockerOutput 'unexpected persisted value' -CurlExit 0 -EnableTelegram $false -ExpectedExit 1
           Invoke-MonitorScenario -Name 'database-failure-notification-failure' -DockerExit 1 -DockerOutput 'unused' -CurlExit 1 -EnableTelegram $true -ExpectedExit 1
@@ -171,7 +183,7 @@ jobs:
           - DB write/read success + Telegram failure: **exit 0**
           - DB read-back mismatch: **exit 1**
           - DB command failure + Telegram failure: **exit 1**
-          - Read-back marker: **isolated per run**
+          - Read-back query targets the **exact per-run marker**
           - Source of truth: **persisted PostgreSQL write/read result**
           '@ | Add-Content -Path $env:GITHUB_STEP_SUMMARY
 
