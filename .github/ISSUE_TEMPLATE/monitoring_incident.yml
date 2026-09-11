@@ -1,0 +1,113 @@
+name: Monitoring incident
+description: Capture a PostgreSQL health, Windows contract, CI gate, runner/platform, or observability incident with evidence and signal ownership.
+title: "[Incident] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for monitoring incidents and CI regressions. Identify the owning signal before proposing a fix. Telegram-only failures are observability incidents unless a required health signal is also red.
+
+  - type: dropdown
+    id: signal
+    attributes:
+      label: Owning signal
+      description: Which signal is the source of truth for this incident?
+      options:
+        - PostgreSQL write/read health
+        - Windows monitor contract
+        - CI / Required gate
+        - GitHub Actions runner/platform
+        - Telegram observability only
+        - Unknown / needs triage
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - SEV-1 — confirmed repeated database-health failure
+        - SEV-2 — required contract/gate regression on main
+        - SEV-3 — observability/notification failure while health gate is green
+        - SEV-4 — documentation/summary presentation issue
+    validations:
+      required: true
+
+  - type: input
+    id: run
+    attributes:
+      label: GitHub Actions run
+      description: Paste the failing run URL or run ID when available.
+      placeholder: https://github.com/.../actions/runs/...
+
+  - type: input
+    id: revision
+    attributes:
+      label: Revision / branch
+      placeholder: main @ abc1234
+    validations:
+      required: true
+
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+      description: State exactly what failed, including exit code, SQL/read-back result, or contract scenario.
+      placeholder: Describe the observed failure and the first owning job that became red.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior / invariant
+      description: Describe the contract that should hold.
+      placeholder: CREATE -> INSERT -> SELECT returns exactly one current run marker; or expected monitor exit-code contract.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Include relevant logs, summary output, exact command/result, screenshots, or platform evidence. Do not paste secrets.
+      placeholder: Minimal evidence supporting the classification.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: reproducibility
+    attributes:
+      label: Reproducibility
+      options:
+        - Consistent
+        - Intermittent
+        - One occurrence
+        - Unknown
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Impact and scope
+      description: Explain what confidence or operation is affected and what remains healthy.
+      placeholder: Scheduled PostgreSQL health is affected; Telegram is healthy/irrelevant; PR contract still passes, etc.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: triage
+    attributes:
+      label: Triage discipline
+      options:
+        - label: I identified the first owning signal rather than only the final notification.
+          required: true
+        - label: I preserved the original failed run/evidence.
+          required: true
+        - label: I did not add arbitrary sleeps, retries, or notification suppression as a workaround.
+          required: true
+        - label: I did not include credentials, tokens, or other secrets in this issue.
+          required: true
