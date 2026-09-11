@@ -71,6 +71,7 @@ Health считается успешным только если SQL-коман�
 | --- | ---: |
 | DB write/read успешен, Telegram выключен | `0` |
 | DB write/read успешен, Telegram transport упал | `0` |
+| DB write успешен, но read-back command завершился ошибкой | `1` |
 | DB read-back вернул неожидаемое состояние | `1` |
 | DB command упала и Telegram тоже упал | `1` |
 
