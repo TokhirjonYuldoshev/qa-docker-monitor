@@ -10,6 +10,7 @@ function Invoke-MonitorScenario {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
         [Parameter(Mandatory = $true)][int]$DockerExit,
+        [Parameter(Mandatory = $false)][int]$ReadbackExit = -1,
         [Parameter(Mandatory = $true)][string]$DockerOutput,
         [Parameter(Mandatory = $true)][int]$CurlExit,
         [Parameter(Mandatory = $true)][bool]$EnableTelegram,
@@ -17,6 +18,12 @@ function Invoke-MonitorScenario {
     )
 
     $env:MOCK_DOCKER_EXIT = "$DockerExit"
+    if ($ReadbackExit -ge 0) {
+        $env:MOCK_DOCKER_READBACK_EXIT = "$ReadbackExit"
+    }
+    else {
+        $env:MOCK_DOCKER_READBACK_EXIT = "$DockerExit"
+    }
     $env:MOCK_DOCKER_OUTPUT = $DockerOutput
     $env:MOCK_CURL_EXIT = "$CurlExit"
     $env:BUILD_NUMBER = 'contract-test'
@@ -47,6 +54,11 @@ try {
     @'
 @echo off
 if defined MOCK_DOCKER_LOG echo %*>>"%MOCK_DOCKER_LOG%"
+echo %* | findstr /C:"-Atc" >nul
+if not errorlevel 1 (
+    if defined MOCK_DOCKER_OUTPUT echo %MOCK_DOCKER_OUTPUT%
+    exit /b %MOCK_DOCKER_READBACK_EXIT%
+)
 if defined MOCK_DOCKER_OUTPUT echo %MOCK_DOCKER_OUTPUT%
 exit /b %MOCK_DOCKER_EXIT%
 '@ | Set-Content -Encoding ascii (Join-Path $testBin 'docker.cmd')
@@ -86,6 +98,15 @@ exit /b %MOCK_CURL_EXIT%
         -ExpectedExit 0
 
     Invoke-MonitorScenario `
+        -Name 'database-readback-command-failure' `
+        -DockerExit 0 `
+        -ReadbackExit 1 `
+        -DockerOutput $expectedStatus `
+        -CurlExit 0 `
+        -EnableTelegram $false `
+        -ExpectedExit 1
+
+    Invoke-MonitorScenario `
         -Name 'database-readback-mismatch' `
         -DockerExit 0 `
         -DockerOutput 'unexpected persisted value' `
@@ -111,6 +132,7 @@ finally {
     foreach ($name in @(
         'MOCK_DOCKER_LOG',
         'MOCK_DOCKER_EXIT',
+        'MOCK_DOCKER_READBACK_EXIT',
         'MOCK_DOCKER_OUTPUT',
         'MOCK_CURL_EXIT',
         'BUILD_NUMBER',
