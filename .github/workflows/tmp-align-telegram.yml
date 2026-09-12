@@ -148,7 +148,7 @@ jobs:
             echo "✅ Итог мониторинга отправлен в Telegram в едином формате портфолио."
           } >> "$GITHUB_STEP_SUMMARY"
           echo "Telegram notification sent."
-'''
+          '''
           path.write_text(text[:index] + replacement, encoding='utf-8')
           PY
 
