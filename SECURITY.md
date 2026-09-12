@@ -1,33 +1,34 @@
-# Security Policy
+# Политика безопасности
 
-This repository is a public QA monitoring portfolio project. It must not contain real Telegram credentials, Jenkins secrets or production database credentials.
+Это публичный портфолио-проект по QA-мониторингу. В репозитории **не должны** находиться реальные Telegram credentials, Jenkins secrets или production database credentials.
 
-## Supported state
+## Поддерживаемое состояние
 
-Security and monitoring fixes are applied to the current `main` branch. Historical branches are not maintained as independently supported versions.
+Security- и monitoring-fixes применяются к текущей ветке `main`. Исторические ветки не поддерживаются как отдельные версии.
 
-## Reporting a security concern
+## Как сообщить о проблеме безопасности
 
-If a repository change exposes a credential or introduces unsafe monitoring behavior:
+Если изменение раскрыло credential или добавило небезопасное monitoring behavior:
 
-1. do not repost the secret in an issue, pull request, screenshot or log;
-2. revoke/rotate an exposed credential immediately;
-3. describe the affected component and risk without reproducing sensitive values;
-4. use a private contact method from the maintainer's GitHub profile when the report itself contains sensitive information.
+1. не публикуйте secret повторно в Issue, Pull Request, screenshot или log;
+2. немедленно отзовите/замените раскрытый credential;
+3. опишите затронутый компонент и риск без воспроизведения чувствительных значений;
+4. если сам отчёт содержит чувствительную информацию, используйте приватный контакт из GitHub-профиля владельца.
 
-Deleting a committed secret is not sufficient by itself because Git history may still contain it.
+Удалить secret из текущего файла недостаточно: значение могло остаться в Git history.
 
-## Current safeguards
+## Текущие защитные меры
 
-- GitHub Actions uses read-only repository contents permission;
-- operational Telegram credentials are read from GitHub Actions secrets;
-- pull-request validation does not send Telegram notifications;
-- `monitor.bat` expects Telegram values from its runtime/Jenkins environment and still evaluates database health when notifications are disabled;
-- PostgreSQL write success/failure is kept separate from Telegram transport outcome;
-- the Windows contract job verifies that observability failures cannot overwrite the database-health exit signal;
-- the pinned PostgreSQL CI image has independent Trivy CRITICAL evidence and a retained CycloneDX SBOM;
-- fixable CRITICAL findings remain blocking unless a compiler-level `gosu` finding is proven non-reachable on the exact extracted binary by pinned binary-mode `govulncheck`; all reachability evidence is retained with the scan;
-- `CI / Required gate` aggregates the validation paths without hiding their independent results;
-- the workflow uses an ephemeral PostgreSQL service credential for CI only; it is not a production secret.
+- GitHub Actions использует read-only permission к repository contents в рабочих validation workflows;
+- operational Telegram credentials читаются из GitHub Actions secrets;
+- Pull Request validation не отправляет реальные Telegram notifications;
+- `monitor.bat` получает Telegram values из runtime/Jenkins environment и продолжает оценивать DB health, даже если notifications выключены;
+- PostgreSQL health result отделён от Telegram transport outcome;
+- Windows contract job проверяет, что observability failure не переписывает database-health exit signal;
+- PostgreSQL CI image имеет независимый Trivy CRITICAL scan и сохраняемый CycloneDX SBOM;
+- fixable `CRITICAL` findings блокируют workflow, кроме явно контролируемого compiler-level `gosu` finding, для которого non-reachability подтверждается на **точном извлечённом binary** pinned binary-mode `govulncheck`;
+- scan, reachability и SBOM evidence сохраняются как artifacts;
+- `CI / Required gate` агрегирует validation paths, не скрывая их независимые результаты;
+- PostgreSQL credential внутри CI относится только к ephemeral service container и не является production secret.
 
-Security or reliability checks should be fixed at their source. Do not weaken a failure signal solely to restore a green workflow.
+Security и reliability findings должны исправляться в источнике. Нельзя ослаблять failure signal только ради возвращения workflow в green.
