@@ -1,25 +1,25 @@
-name: Monitoring incident
-description: Capture a PostgreSQL health, Windows contract, CI gate, runner/platform, or observability incident with evidence and signal ownership.
+name: Инцидент мониторинга
+description: Зафиксировать PostgreSQL health, Windows contract, CI gate, runner/platform или observability incident с evidence и владельцем сигнала.
 title: "[Incident] "
 labels: []
 body:
   - type: markdown
     attributes:
       value: |
-        Use this form for monitoring incidents and CI regressions. Identify the owning signal before proposing a fix. Telegram-only failures are observability incidents unless a required health signal is also red.
+        Используйте эту форму для monitoring incidents и CI regressions. Сначала определите owning signal, затем предлагайте исправление. Ошибка только Telegram относится к observability, если обязательный health signal остаётся зелёным.
 
   - type: dropdown
     id: signal
     attributes:
-      label: Owning signal
-      description: Which signal is the source of truth for this incident?
+      label: Владелец сигнала
+      description: Какой сигнал является source of truth для этого инцидента?
       options:
         - PostgreSQL write/read health
         - Windows monitor contract
         - CI / Required gate
         - GitHub Actions runner/platform
-        - Telegram observability only
-        - Unknown / needs triage
+        - Только Telegram observability
+        - Неизвестно / нужен triage
     validations:
       required: true
 
@@ -28,10 +28,10 @@ body:
     attributes:
       label: Severity
       options:
-        - SEV-1 — confirmed repeated database-health failure
-        - SEV-2 — required contract/gate regression on main
-        - SEV-3 — observability/notification failure while health gate is green
-        - SEV-4 — documentation/summary presentation issue
+        - SEV-1 — подтверждённый повторяющийся database-health failure
+        - SEV-2 — regression обязательного contract/gate на main
+        - SEV-3 — observability/notification failure при зелёном health gate
+        - SEV-4 — проблема документации или отображения Summary
     validations:
       required: true
 
@@ -39,7 +39,7 @@ body:
     id: run
     attributes:
       label: GitHub Actions run
-      description: Paste the failing run URL or run ID when available.
+      description: Укажите URL или run ID, если он доступен.
       placeholder: https://github.com/.../actions/runs/...
 
   - type: input
@@ -53,18 +53,18 @@ body:
   - type: textarea
     id: observed
     attributes:
-      label: Observed behavior
-      description: State exactly what failed, including exit code, SQL/read-back result, or contract scenario.
-      placeholder: Describe the observed failure and the first owning job that became red.
+      label: Фактическое поведение
+      description: Укажите, что именно сломалось: exit code, SQL/read-back result или contract scenario.
+      placeholder: Опишите failure и первый owning job, который стал красным.
     validations:
       required: true
 
   - type: textarea
     id: expected
     attributes:
-      label: Expected behavior / invariant
-      description: Describe the contract that should hold.
-      placeholder: CREATE -> INSERT -> SELECT returns exactly one current run marker; or expected monitor exit-code contract.
+      label: Ожидаемое поведение / инвариант
+      description: Опишите контракт, который должен выполняться.
+      placeholder: CREATE -> INSERT -> SELECT возвращает ровно один marker текущего запуска; либо ожидаемый monitor exit-code contract.
     validations:
       required: true
 
@@ -72,42 +72,42 @@ body:
     id: evidence
     attributes:
       label: Evidence
-      description: Include relevant logs, summary output, exact command/result, screenshots, or platform evidence. Do not paste secrets.
-      placeholder: Minimal evidence supporting the classification.
+      description: Приложите релевантные logs, Summary, точную команду/результат, screenshots или platform evidence. Не вставляйте secrets.
+      placeholder: Минимальное evidence, подтверждающее классификацию.
     validations:
       required: true
 
   - type: dropdown
     id: reproducibility
     attributes:
-      label: Reproducibility
+      label: Воспроизводимость
       options:
-        - Consistent
-        - Intermittent
-        - One occurrence
-        - Unknown
+        - Стабильно воспроизводится
+        - Периодически
+        - Один случай
+        - Неизвестно
     validations:
       required: true
 
   - type: textarea
     id: scope
     attributes:
-      label: Impact and scope
-      description: Explain what confidence or operation is affected and what remains healthy.
-      placeholder: Scheduled PostgreSQL health is affected; Telegram is healthy/irrelevant; PR contract still passes, etc.
+      label: Влияние и область
+      description: Объясните, какая операция или уверенность затронута и что остаётся исправным.
+      placeholder: Scheduled PostgreSQL health затронут; Telegram исправен/не относится; PR contract проходит и т.д.
     validations:
       required: true
 
   - type: checkboxes
     id: triage
     attributes:
-      label: Triage discipline
+      label: Дисциплина triage
       options:
-        - label: I identified the first owning signal rather than only the final notification.
+        - label: Я определил первый owning signal, а не только финальное уведомление.
           required: true
-        - label: I preserved the original failed run/evidence.
+        - label: Я сохранил исходный failed run/evidence.
           required: true
-        - label: I did not add arbitrary sleeps, retries, or notification suppression as a workaround.
+        - label: Я не добавлял произвольные sleeps, retries или suppression уведомлений как workaround.
           required: true
-        - label: I did not include credentials, tokens, or other secrets in this issue.
+        - label: Я не включил credentials, tokens или другие secrets в Issue.
           required: true
