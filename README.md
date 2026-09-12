@@ -1,26 +1,33 @@
 # Гибридный QA-мониторинг PostgreSQL
 
 [![QA Database Health Monitor](https://github.com/TokhirjonYuldoshev/qa-docker-monitor/actions/workflows/main.yml/badge.svg)](https://github.com/TokhirjonYuldoshev/qa-docker-monitor/actions/workflows/main.yml)
+[![PostgreSQL Image Security](https://github.com/TokhirjonYuldoshev/qa-docker-monitor/actions/workflows/container-security.yml/badge.svg)](https://github.com/TokhirjonYuldoshev/qa-docker-monitor/actions/workflows/container-security.yml)
 
-Portfolio-проект по инженерному мониторингу качества: PostgreSQL проверяется через **реальную запись с последующим read-back**, orchestration валидируется в **GitHub Actions**, Windows/Jenkins-логика защищена contract-тестами, а operational results отправляются в **Telegram**.
+Портфолио-проект по инженерии качества и наблюдаемому мониторингу PostgreSQL. Главный health-сигнал строится не на `ping` или открытом порте, а на **реальной записи в БД с точным read-back маркера текущего запуска**. GitHub Actions проверяет cloud/synthetic path, Windows contract-тесты защищают поведение `monitor.bat`, а Telegram используется только как вспомогательный канал доставки результата.
+
+## Ключевые сигналы
+
+| Сигнал | Что подтверждает | Источник истины | Блокирующий |
+| --- | --- | --- | --- |
+| `PostgreSQL write/read health check` | readiness + `CREATE` + `INSERT` + точный `SELECT` | persisted PostgreSQL state | Да |
+| `Windows monitor contract` | exit-code и orchestration semantics `monitor.bat` | contract harness | Да для PR/push/manual |
+| `CI / Required gate` | агрегирует обязательные сигналы | upstream jobs | Да |
+| `Security / PostgreSQL image` | CRITICAL scan + reachability evidence + SBOM | security workflow | Да |
+| `Telegram Notification` | доставку результата | Telegram API | Нет |
 
 ## Что демонстрирует проект
 
-- scheduled PostgreSQL health checks в GitHub Actions;
-- pre-merge validation изменений monitoring logic через Pull Request;
-- PostgreSQL 16 service container с readiness health check;
-- реальный SQL `CREATE / INSERT / SELECT` вместо поверхностной проверки порта;
-- persisted-state validation как для cloud workflow, так и для локального Windows/Jenkins monitor;
-- per-run markers, исключающие зависимость read-back от чужой конкурентной записи;
-- разделение **database health signal** и **notification transport**;
-- contract-тесты Windows/Jenkins monitor через изолированные command doubles;
-- стабильный агрегирующий `CI / Required gate`;
-- структурированный GitHub Actions Summary;
-- Telegram observability с прямой ссылкой на run;
-- manual-only Telegram diagnostics: `getMe` → `getChat` → `sendMessage`;
-- controlled Dependabot maintenance;
-- security/QA governance через `SECURITY.md`, `CONTRIBUTING.md`, `CODEOWNERS` и PR template;
-- operational incident response через [`docs/incident-runbook.md`](docs/incident-runbook.md) и structured monitoring-incident issue form.
+- PostgreSQL 16 service container и плановые synthetic health checks;
+- реальный SQL `CREATE / INSERT / SELECT` вместо поверхностной проверки доступности порта;
+- уникальный per-run marker, исключающий ложный read-back чужой записи;
+- pre-merge validation monitoring logic через Pull Request;
+- Windows/Jenkins contract-тесты с изолированными command doubles;
+- независимый security workflow для PostgreSQL image: Trivy, reachability proof и CycloneDX SBOM;
+- стабильный `CI / Required gate`;
+- структурированный GitHub Actions Summary и сохраняемые evidence artifacts;
+- Telegram-уведомления в едином формате портфолио;
+- Dependabot, `SECURITY.md`, `CONTRIBUTING.md`, `CODEOWNERS`, PR template и incident Issue Form;
+- формализованный разбор инцидентов без rerun-until-green и masking retries.
 
 ## Архитектура
 
@@ -33,27 +40,29 @@ flowchart LR
     GH --> WT[Windows contract tests]
     WT --> BAT[monitor.bat]
     J[Jenkins / Windows] --> BAT
-    BAT --> PG2[Persistent Docker PostgreSQL]
+    BAT --> PG2[Separately managed PostgreSQL]
     BAT --> LR[Per-run write + exact read-back]
 
     R --> G[CI / Required gate]
     WT --> G
     G --> S[GitHub Actions Summary]
     G -. result .-> TG[Telegram notification]
+
+    PG1 --> SEC[PostgreSQL image security]
 ```
 
-## Основной workflow
+## Основной CI-процесс
 
 Файл: `.github/workflows/main.yml`.
 
 Триггеры:
 
-- Pull Request — проверяет SQL health и Windows contract до merge, Telegram намеренно не используется;
-- push в `main` — выполняет обе validation paths и отправляет итог в Telegram;
-- ручной `workflow_dispatch` — полный on-demand запуск;
-- schedule в **09:00 и 21:00 UTC** — operational PostgreSQL health check без лишнего расхода Windows runner.
+- **Pull Request** — SQL health + Windows contract; Telegram намеренно не отправляется;
+- **push в `main`** — полный validation path + итоговое Telegram-уведомление;
+- **`workflow_dispatch`** — ручной полный запуск;
+- **schedule в 09:00 и 21:00 UTC** — synthetic PostgreSQL health check без лишнего расхода Windows runner.
 
-Linux job поднимает PostgreSQL 16, ждёт readiness и выполняет write/read-проверку. На каждый workflow run формируется уникальный marker из `GITHUB_RUN_ID` и `GITHUB_RUN_ATTEMPT`:
+Для каждого запуска создаётся уникальный marker из `GITHUB_RUN_ID` и `GITHUB_RUN_ATTEMPT`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS robot_log (...);
@@ -61,131 +70,113 @@ INSERT INTO robot_log (status) VALUES ('<unique run marker>');
 SELECT count(*) FROM robot_log WHERE status = '<unique run marker>';
 ```
 
-Health считается успешным только если SQL-команды завершились без ошибки и read-back вернул **ровно одну** сохранённую запись. Таким образом, проверяется не только принятие `INSERT`, но и наблюдаемое persisted state.
+Health считается успешным только если SQL-команды завершились без ошибки и read-back вернул **ровно одну** запись текущего запуска. Успешный старт процесса PostgreSQL или открытый порт сами по себе не считаются доказательством здоровья БД.
 
-## Windows/Jenkins contract
+## Контракт Windows/Jenkins
 
-`windows-latest` job запускает `monitor.bat` против изолированных doubles для `docker.cmd` и `curl.cmd` и проверяет failure semantics без реальной БД, Jenkins agent или Telegram credentials.
+Job `Windows monitor contract` запускает `tests/monitor-contract.ps1` против production-скрипта `monitor.bat` с изолированными doubles для `docker.cmd` и `curl.cmd`.
 
 | Сценарий | Ожидаемый exit code |
 | --- | ---: |
 | DB write/read успешен, Telegram выключен | `0` |
 | DB write/read успешен, Telegram transport упал | `0` |
-| DB write успешен, но read-back command завершился ошибкой | `1` |
-| DB read-back вернул неожидаемое состояние | `1` |
+| Read-back command завершился ошибкой | `1` |
+| Read-back не совпал с marker текущего запуска | `1` |
 | DB command упала и Telegram тоже упал | `1` |
 
-Контракт защищает четыре ключевых правила:
+Контракт защищает принцип: **database health владеет exit code, Telegram — нет**. Подробности и локальный запуск: [`tests/README.md`](tests/README.md).
 
-- успешная SQL-команда без подтверждённого read-back недостаточна для healthy result;
-- read-back относится к **маркеру текущего запуска**, а не к глобально последней строке таблицы;
-- ошибка Telegram не должна превращать исправную БД в ложный failure;
-- ошибка БД не должна теряться из-за notification logic.
+## Агрегирующий quality gate
 
-## Aggregate gate
+`CI / Required gate` собирает результаты независимых jobs. Для PR, push и manual run нужны успешные PostgreSQL health и Windows contract. Для scheduled run Windows contract намеренно `skipped`, а gate оценивает только synthetic PostgreSQL health.
 
-`CI / Required gate` собирает результаты независимых jobs:
+GitHub Actions Summary показывает общий итог, trigger, branch, commit и прямую ссылку на run. Aggregate gate не заменяет evidence исходного job: при ошибке сначала анализируется владелец сигнала.
 
-- `PostgreSQL write/read health check`;
-- `Windows monitor contract`.
+## Безопасность PostgreSQL image
 
-Для PR/push/manual нужны оба успешных сигнала. Для scheduled run Windows contract намеренно `skipped`, а gate оценивает operational PostgreSQL health.
+`.github/workflows/container-security.yml` независимо проверяет image, используемый CI:
 
-GitHub Actions Summary показывает общий итог, trigger, branch, commit и прямую ссылку на run.
+- Trivy scan на fixable `CRITICAL` vulnerabilities;
+- извлечение точного `gosu` binary;
+- pinned binary-mode `govulncheck` для reachability proof известного compiler-level finding;
+- CycloneDX SBOM;
+- сохранение scan/reachability/SBOM evidence;
+- блокировка новых или неподтверждённых fixable CRITICAL findings.
 
-## Operational incident response
+Подробности правил: [`SECURITY.md`](SECURITY.md).
 
-[`docs/incident-runbook.md`](docs/incident-runbook.md) определяет triage по владельцу сигнала:
+## Telegram-уведомления
 
-- PostgreSQL persisted write/read health — основной operational source of truth;
-- Windows monitor contract — source of truth для exit-code/orchestration semantics;
-- `CI / Required gate` — агрегатор, но не замена upstream evidence;
-- Telegram — non-blocking observability transport.
+Telegram — **вспомогательный observability transport**, а не источник истины для DB health. Ошибка Telegram не делает исправную БД красной и не может скрыть реальный PostgreSQL failure.
 
-Runbook фиксирует порядок triage, severity model, exit criteria и anti-patterns. Для suspected runner/platform incidents допускается максимум **один targeted diagnostic rerun** после конкретного evidence, что external condition восстановился. Повторные rerun-until-green loops, произвольные sleeps и masking notification logic запрещены.
+После push в `main`, manual или scheduled run сообщение оформляется в едином стиле портфолио:
 
-`.github/ISSUE_TEMPLATE/monitoring_incident.yml` превращает эти правила в operational issue contract: при регистрации incident нужно указать owning signal, severity, revision, observed/expected behavior, evidence, reproducibility и impact и подтвердить, что секреты и masking-workarounds не добавлялись. Blank issues отключены через `.github/ISSUE_TEMPLATE/config.yml`; security-вопросы направляются к `SECURITY.md`.
+- заголовок `QA Database Health Monitor` и краткое описание;
+- крупный итоговый статус: `МОНИТОРИНГ ИСПРАВЕН`, `МОНИТОРИНГ ТРЕБУЕТ ВНИМАНИЯ`, `ЗАПУСК ОТМЕНЁН` или неполный результат;
+- репозиторий, ветка, событие и автор;
+- отдельный блок результатов PostgreSQL health, Windows contract и `CI / Required gate`;
+- заметная ссылка на GitHub Actions run.
 
-## Telegram observability
+Transport использует ограниченные timeout, `curl --retry 2 --retry-all-errors` и подтверждает одновременно HTTP `200` и Telegram JSON `.ok == true`.
 
-Telegram вынесен в отдельный job после quality gate. Сообщение содержит:
-
-- общий статус `HEALTHY` / `ALERT`;
-- PostgreSQL write/read health;
-- Windows monitor contract;
-- `CI / Required gate`;
-- репозиторий, ветку, автора, trigger и commit;
-- прямую ссылку на GitHub Actions run.
-
-Поддерживаются repository secrets:
+Основные repository secrets:
 
 ```text
 TELEGRAM_BOT_TOKEN
 TELEGRAM_CHAT_ID
 ```
 
-Для обратной совместимости также принимаются:
+Для обратной совместимости также поддерживаются `TG_TOKEN` и `TG_CHAT_ID`. Для отдельной диагностики есть manual-only `.github/workflows/telegram-test.yml` (`getMe` → `getChat` → `sendMessage`).
 
-```text
-TG_TOKEN
-TG_CHAT_ID
-```
+## Границы мониторинга
 
-Notification transport — **вспомогательный observability signal**. Если Telegram API недоступен, реальный DB health result сохраняется и не подменяется transport failure.
+Плановый GitHub Actions path — **synthetic canary на временном PostgreSQL service container**. Зелёный run подтверждает корректность monitoring contract в GitHub-hosted runner, но не доказывает доступность чужой production/long-lived БД.
 
-Для отдельной проверки интеграции используется manual-only workflow `.github/workflows/telegram-test.yml`. Он проверяет bot token, target chat и отправку тестового сообщения, чтобы отличать ошибку Telegram-конфигурации от ошибки PostgreSQL.
+`monitor.bat` представляет отдельный Windows/Jenkins-compatible path для самостоятельно управляемого PostgreSQL container. Эти границы зафиксированы в [`docs/monitoring-boundary.md`](docs/monitoring-boundary.md).
 
 ## Локальный / Jenkins-compatible monitor
 
-`monitor.bat` проверяет не только успешность `INSERT`, но и persisted state. Для каждого запуска формируется `EXPECTED_STATUS`, включающий `BUILD_NUMBER` и отдельный `RUN_TOKEN`; после записи скрипт выбирает из `robot_log` **именно этот marker** и сравнивает его с ожидаемым значением.
-
-Это устраняет гонку, при которой параллельный writer мог вставить новую строку между `INSERT` и read-back и ошибочно сделать чужую запись «последней». Локальный health считается успешным только при точном совпадении marker. Ошибка команды, ошибка чтения или mismatch возвращают exit code `1`.
-
-Runtime configuration:
+`monitor.bat` формирует `EXPECTED_STATUS` из `BUILD_NUMBER` и `RUN_TOKEN`, записывает его в `robot_log`, затем читает **именно этот marker** и сравнивает с ожидаемым значением.
 
 | Переменная | Обязательна | Поведение |
 | --- | --- | --- |
 | `DB_CONTAINER` | Нет | по умолчанию `dev-postgres-db` |
 | `BUILD_NUMBER` | Нет | вне Jenkins используется `manual` |
-| `RUN_TOKEN` | Нет | по умолчанию генерируется отдельный token текущего запуска |
+| `RUN_TOKEN` | Нет | генерируется token текущего запуска |
 | `TOKEN` | Нет для DB health | вместе с `CHAT_ID` включает Telegram |
 | `CHAT_ID` | Нет для DB health | вместе с `TOKEN` включает Telegram |
 
 Telegram delivery и retention cleanup выполняются best-effort и не имеют права переписать database-health exit code.
 
-## Failure semantics
+## Правила обработки ошибок
 
-- readiness/setup/SQL failure делает health path красным;
-- persisted PostgreSQL write/read result является главным health signal;
-- cloud run marker исключает ложноположительный read-back по данным другого запуска;
-- локальный monitor использует собственный per-run marker и не зависит от глобально последней строки таблицы;
-- Telegram failure не создаёт ложный DB failure;
-- notification failure не скрывает реальную ошибку БД;
+- readiness/setup/SQL/read-back failure делает соответствующий health path красным;
+- persisted PostgreSQL write/read result остаётся главным health signal;
+- per-run marker защищает от ложноположительного результата из-за параллельного writer;
+- Telegram failure не создаёт ложный DB failure и не скрывает настоящую ошибку БД;
 - PR validation не отправляет operational Telegram alerts;
-- aggregate gate не может стать зелёным, если обязательный validation job упал;
+- `CI / Required gate` не может быть зелёным при падении обязательного upstream signal;
 - Windows contract защищает эти правила от регрессии;
-- incident runbook не допускает rerun-until-green или sleep/retry masking.
+- incident process запрещает rerun-until-green, произвольные sleeps и retries для маскировки причины.
 
-## Dependency maintenance
+## Разбор инцидентов
 
-`.github/dependabot.yml` проверяет GitHub Actions раз в неделю по часовому поясу `Europe/Minsk`.
+[`docs/incident-runbook.md`](docs/incident-runbook.md) задаёт порядок triage по владельцу сигнала, severity model и exit criteria. `.github/ISSUE_TEMPLATE/monitoring_incident.yml` превращает эти правила в структурированную форму инцидента.
 
-Minor/patch updates группируются, major updates остаются отдельными инженерными изменениями. Любой dependency PR проходит те же PostgreSQL, Windows contract и aggregate gates до merge.
+Для предполагаемого runner/platform incident допускается максимум **один targeted diagnostic rerun** только после конкретного evidence восстановления внешнего условия. Исходный failed run сохраняется.
 
-## Стек
+## Обновление зависимостей
 
-| Область | Технология |
-| --- | --- |
-| CI / schedule | GitHub Actions |
-| Local automation | Jenkins / Windows batch |
-| Database | PostgreSQL 16 |
-| Containerization | Docker |
-| Contract validation | Windows runner + command doubles |
-| Health validation | SQL write + exact per-run read-back assertion |
-| Merge signal | `CI / Required gate` |
-| Notifications | Telegram Bot API |
-| Dependency maintenance | Dependabot |
-| Incident response | Runbook + structured Issue Form |
+`.github/dependabot.yml` проверяет GitHub Actions раз в неделю по часовому поясу `Europe/Minsk`. Minor/patch updates группируются, major updates остаются отдельными инженерными изменениями. Dependency PR проходит те же обязательные проверки до merge.
+
+## Документация
+
+- [`docs/README.md`](docs/README.md) — карта документации;
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — правила изменений и evidence перед merge;
+- [`SECURITY.md`](SECURITY.md) — работа с секретами и security findings;
+- [`docs/monitoring-boundary.md`](docs/monitoring-boundary.md) — границы synthetic и separately managed paths;
+- [`docs/incident-runbook.md`](docs/incident-runbook.md) — triage и incident response;
+- [`tests/README.md`](tests/README.md) — Windows contract harness.
 
 ## Структура репозитория
 
@@ -199,26 +190,28 @@ qa-docker-monitor/
 │   │   └── monitoring_incident.yml
 │   ├── pull_request_template.md
 │   └── workflows/
+│       ├── container-security.yml
 │       ├── main.yml
 │       └── telegram-test.yml
 ├── docs/
-│   └── incident-runbook.md
-├── .gitattributes
-├── .gitignore
+│   ├── README.md
+│   ├── incident-runbook.md
+│   └── monitoring-boundary.md
+├── tests/
+│   ├── README.md
+│   └── monitor-contract.ps1
 ├── CONTRIBUTING.md
 ├── SECURITY.md
 ├── monitor.bat
 └── README.md
 ```
 
-`CONTRIBUTING.md` фиксирует change policy и validation expectations для monitoring logic, `SECURITY.md` описывает работу с секретами и порядок обработки security findings, а incident runbook, structured issue form и issue intake config задают единый operational triage contract.
-
 ## Почему это QA-проект
 
-Задача проекта — не просто проверить, что процесс PostgreSQL запущен. Монитор проверяет наблюдаемую способность критичной зависимости **принять конкретную запись и вернуть состояние именно этого запуска обратно**, формирует детерминированный CI signal, валидирует orchestration contract до merge, отделяет dependency health от alert-delivery health и формализует incident response.
+Цель — показать не просто «монитор, который иногда пингует БД», а проверяемый quality contract: конкретная запись должна быть принята, сохранена и считана обратно для текущего запуска; orchestration semantics защищены тестами; security и operational signals разделены; notification transport не подменяет health; incident response основан на evidence.
 
-Такой подход ближе к инженерии качества production-систем, чем обычный `ping` или port check.
+Такой подход демонстрирует QA Engineering для инфраструктуры и CI/CD без заявления, что synthetic check является production-monitoring чужой системы.
 
 ---
 
-**Portfolio project by Tokhirjon Yuldoshev**
+**Портфолио-проект Тохиржона Йулдошева**
