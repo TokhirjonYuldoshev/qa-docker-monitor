@@ -1,46 +1,46 @@
-## Summary
+## Краткое описание
 
-<!-- Describe one focused monitoring/QA outcome and why it is needed. -->
+<!-- Опишите одну сфокусированную monitoring/QA задачу и зачем она нужна. -->
 
-## Risk area
+## Область риска
 
 - [ ] PostgreSQL health probe
 - [ ] Windows/Jenkins monitor contract
-- [ ] GitHub Actions / scheduling / quality gate
+- [ ] GitHub Actions / schedule / quality gate
 - [ ] Telegram observability
 - [ ] Docker / runtime configuration
-- [ ] Documentation only
+- [ ] Только документация
 
-## Verification evidence
+## Evidence проверки
 
-- [ ] `PostgreSQL write health check`
-- [ ] `Windows monitor contract` when not schedule-only
+- [ ] `PostgreSQL write/read health check`
+- [ ] `Windows monitor contract`, если изменение не относится только к schedule
 - [ ] `CI / Required gate`
-- [ ] Telegram behavior reviewed if notification logic changed
-- [ ] Scheduled-run semantics reviewed if cron/conditions changed
+- [ ] Telegram behavior проверено, если менялась notification logic
+- [ ] Scheduled-run semantics проверены, если менялись cron/conditions
 
-Evidence / run links:
+Ссылки на run/evidence:
 
-<!-- Add run links only when they improve triage/review. -->
+<!-- Добавляйте ссылки, когда они действительно помогают review или triage. -->
 
-## Signal safeguards
+## Защита сигналов
 
-- [ ] PostgreSQL write result remains the source of truth for DB health
-- [ ] Notification/cleanup failure cannot overwrite the DB health result
-- [ ] PR validation does not send real Telegram notifications
-- [ ] No real token, chat ID, password or credential was committed
-- [ ] Windows contract tests cover changed batch-script failure semantics
-- [ ] Scheduled runs do not consume unrelated validation unnecessarily
-- [ ] No retry/sleep was added merely to make a failing check green
-- [ ] README and workflow behavior remain aligned
+- [ ] PostgreSQL write/read result остаётся source of truth для DB health
+- [ ] Notification/cleanup failure не может переписать DB health result
+- [ ] PR validation не отправляет реальные Telegram notifications
+- [ ] В репозиторий не попали реальные token, chat ID, password или другие credentials
+- [ ] Windows contract tests покрывают изменённые failure semantics batch-скрипта
+- [ ] Scheduled runs не расходуют unrelated validation без необходимости
+- [ ] Retry/sleep не добавлены только ради превращения failing check в green
+- [ ] README и фактическое поведение workflow согласованы
 
-## Failure classification
+## Классификация исходной ошибки
 
-If this PR responds to a failure, classify the original signal:
+Если PR исправляет failure, укажите исходный owning signal:
 
 - [ ] PostgreSQL / monitored dependency failure
 - [ ] Monitor script / contract defect
 - [ ] CI environment / runner failure
 - [ ] Telegram / observability failure
 - [ ] Configuration / credential failure
-- [ ] Not applicable
+- [ ] Не применимо
