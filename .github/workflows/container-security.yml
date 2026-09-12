@@ -21,8 +21,14 @@ jobs:
     name: Security / PostgreSQL image
     runs-on: ubuntu-latest
     timeout-minutes: 10
+
     env:
       POSTGRES_IMAGE: postgres:16.15-alpine3.24
+
+    outputs:
+      raw_critical_count: ${{ steps.critical_policy.outputs.raw_critical_count }}
+      gosu_tls_count: ${{ steps.critical_policy.outputs.gosu_tls_count }}
+      other_critical_count: ${{ steps.critical_policy.outputs.other_critical_count }}
 
     steps:
       - name: Prepare security evidence directory
@@ -49,10 +55,13 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
+
           cid="$(docker create "$POSTGRES_IMAGE")"
           trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+
           docker cp "$cid:/usr/local/bin/gosu" "$RUNNER_TEMP/gosu"
           chmod +x "$RUNNER_TEMP/gosu"
+
           "$RUNNER_TEMP/gosu" --version | tee reports/gosu-version.txt
           sha256sum "$RUNNER_TEMP/gosu" | tee reports/gosu-sha256.txt
 
@@ -61,16 +70,24 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
+
           mkdir -p "$RUNNER_TEMP/bin"
-          GOBIN="$RUNNER_TEMP/bin" go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
-          "$RUNNER_TEMP/bin/govulncheck" -version | tee reports/govulncheck-version.txt
+
+          GOBIN="$RUNNER_TEMP/bin" \
+            go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+
+          "$RUNNER_TEMP/bin/govulncheck" -version \
+            | tee reports/govulncheck-version.txt
 
       - name: Check compiled gosu vulnerability reachability
         id: gosu_reachability
         continue-on-error: true
         run: |
           set -o pipefail
-          "$RUNNER_TEMP/bin/govulncheck" -mode=binary "$RUNNER_TEMP/gosu" \
+
+          "$RUNNER_TEMP/bin/govulncheck" \
+            -mode=binary \
+            "$RUNNER_TEMP/gosu" \
             | tee reports/govulncheck-gosu.txt
 
       - name: Generate CycloneDX PostgreSQL image SBOM
@@ -103,22 +120,55 @@ jobs:
             echo "Trivy scan execution finished with outcome: $TRIVY_OUTCOME" >&2
             exit 1
           fi
-          if [[ "$GOSU_EXTRACT_OUTCOME" != 'success' || "$GOVULNCHECK_INSTALL_OUTCOME" != 'success' || "$GOSU_REACHABILITY_OUTCOME" != 'success' ]]; then
+
+          if [[ "$GOSU_EXTRACT_OUTCOME" != 'success' ||
+                "$GOVULNCHECK_INSTALL_OUTCOME" != 'success' ||
+                "$GOSU_REACHABILITY_OUTCOME" != 'success' ]]; then
             echo "gosu reachability evidence is incomplete." >&2
             exit 1
           fi
+
           if [[ "$SBOM_OUTCOME" != 'success' ]]; then
             echo "CycloneDX SBOM generation finished with outcome: $SBOM_OUTCOME" >&2
             exit 1
           fi
+
           if [[ ! -s reports/trivy-postgres.json ]]; then
             echo "Trivy JSON evidence is missing." >&2
             exit 1
           fi
 
-          RAW_CRITICAL_COUNT="$(jq '[.Results[]? | .Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' reports/trivy-postgres.json)"
-          GOSU_TLS_COUNT="$(jq '[.Results[]? as $result | ($result.Vulnerabilities // [])[] | select(.Severity == "CRITICAL" and .VulnerabilityID == "CVE-2025-68121" and $result.Target == "usr/local/bin/gosu")] | length' reports/trivy-postgres.json)"
-          OTHER_CRITICAL_COUNT="$(jq '[.Results[]? as $result | ($result.Vulnerabilities // [])[] | select(.Severity == "CRITICAL") | select(.VulnerabilityID != "CVE-2025-68121" or $result.Target != "usr/local/bin/gosu")] | length' reports/trivy-postgres.json)"
+          RAW_CRITICAL_COUNT="$(
+            jq '[
+              .Results[]?
+              | .Vulnerabilities[]?
+              | select(.Severity == "CRITICAL")
+            ] | length' reports/trivy-postgres.json
+          )"
+
+          GOSU_TLS_COUNT="$(
+            jq '[
+              .Results[]? as $result
+              | ($result.Vulnerabilities // [])[]
+              | select(
+                  .Severity == "CRITICAL"
+                  and .VulnerabilityID == "CVE-2025-68121"
+                  and $result.Target == "usr/local/bin/gosu"
+                )
+            ] | length' reports/trivy-postgres.json
+          )"
+
+          OTHER_CRITICAL_COUNT="$(
+            jq '[
+              .Results[]? as $result
+              | ($result.Vulnerabilities // [])[]
+              | select(.Severity == "CRITICAL")
+              | select(
+                  .VulnerabilityID != "CVE-2025-68121"
+                  or $result.Target != "usr/local/bin/gosu"
+                )
+            ] | length' reports/trivy-postgres.json
+          )"
 
           {
             echo "raw_critical_count=$RAW_CRITICAL_COUNT"
@@ -128,15 +178,29 @@ jobs:
 
           if (( OTHER_CRITICAL_COUNT > 0 )); then
             echo "Found $OTHER_CRITICAL_COUNT fixable CRITICAL finding(s) outside the reachability-qualified gosu TLS finding." >&2
-            jq -r '.Results[]? as $result | ($result.Vulnerabilities // [])[] | select(.Severity == "CRITICAL") | select(.VulnerabilityID != "CVE-2025-68121" or $result.Target != "usr/local/bin/gosu") | "- \(.VulnerabilityID) target=\($result.Target) package=\(.PkgName) installed=\(.InstalledVersion) fixed=\(.FixedVersion)"' reports/trivy-postgres.json >&2
+
+            jq -r '
+              .Results[]? as $result
+              | ($result.Vulnerabilities // [])[]
+              | select(.Severity == "CRITICAL")
+              | select(
+                  .VulnerabilityID != "CVE-2025-68121"
+                  or $result.Target != "usr/local/bin/gosu"
+                )
+              | "- \(.VulnerabilityID) target=\($result.Target) package=\(.PkgName) installed=\(.InstalledVersion) fixed=\(.FixedVersion)"
+            ' reports/trivy-postgres.json >&2
+
             exit 1
           fi
 
           if (( GOSU_TLS_COUNT > 0 )); then
-            if ! grep -Fq 'Your code is affected by 0 vulnerabilities.' reports/govulncheck-gosu.txt; then
+            if ! grep -Fq \
+              'Your code is affected by 0 vulnerabilities.' \
+              reports/govulncheck-gosu.txt; then
               echo "Trivy reported CVE-2025-68121 in gosu, but govulncheck did not prove zero affected vulnerabilities." >&2
               exit 1
             fi
+
             echo "CVE-2025-68121 is present in gosu compiler metadata but not reachable in the exact binary according to govulncheck."
           fi
 
@@ -198,3 +262,164 @@ jobs:
         run: |
           echo "PostgreSQL image security policy did not succeed." >&2
           exit 1
+
+  notify:
+    name: Telegram Notification
+    if: ${{ always() }}
+    needs: [postgres-image-security]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Send PostgreSQL security result to Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || secrets.TG_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || secrets.TG_CHAT_ID }}
+
+          SECURITY_RESULT: ${{ needs.postgres-image-security.result }}
+          RAW_CRITICAL_COUNT: ${{ needs.postgres-image-security.outputs.raw_critical_count }}
+          GOSU_TLS_COUNT: ${{ needs.postgres-image-security.outputs.gosu_tls_count }}
+          OTHER_CRITICAL_COUNT: ${{ needs.postgres-image-security.outputs.other_critical_count }}
+
+          POSTGRES_IMAGE: postgres:16.15-alpine3.24
+
+        run: |
+          if [[ -z "$TELEGRAM_BOT_TOKEN" || -z "$TELEGRAM_CHAT_ID" ]]; then
+            echo "::notice::Telegram secrets не настроены; уведомление пропущено."
+
+            {
+              echo "## ✈️ Telegram"
+              echo
+              echo "ℹ️ Уведомление PostgreSQL Image Security пропущено: Telegram secrets не настроены."
+              echo
+              echo "Для Pull Request из fork GitHub намеренно не передаёт repository secrets."
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            exit 0
+          fi
+
+          result_label() {
+            case "$1" in
+              success) echo "✅ Успешно" ;;
+              failure) echo "❌ Ошибка" ;;
+              cancelled) echo "⏹️ Отменено" ;;
+              skipped) echo "⏭️ Пропущено" ;;
+              *) echo "❔ ${1:-unknown}" ;;
+            esac
+          }
+
+          event_label() {
+            case "$1" in
+              pull_request) echo "Pull Request" ;;
+              push) echo "Push в репозиторий" ;;
+              workflow_dispatch) echo "Ручной запуск" ;;
+              schedule) echo "Еженедельная security-проверка" ;;
+              *) echo "$1" ;;
+            esac
+          }
+
+          escape_html() {
+            local text="$1"
+            text="${text//&/&amp;}"
+            text="${text//</&lt;}"
+            text="${text//>/&gt;}"
+            printf '%s' "$text"
+          }
+
+          if [[ "$SECURITY_RESULT" == "success" ]]; then
+            OVERALL_ICON="✅"
+            OVERALL_TITLE="POSTGRESQL IMAGE SECURITY ПРОЙДЕНА"
+            OVERALL_SUBTITLE="Security policy, reachability evidence и SBOM подтверждены"
+          elif [[ "$SECURITY_RESULT" == "failure" ]]; then
+            OVERALL_ICON="❌"
+            OVERALL_TITLE="SECURITY ТРЕБУЕТ ВНИМАНИЯ"
+            OVERALL_SUBTITLE="PostgreSQL image security policy завершилась с ошибкой"
+          elif [[ "$SECURITY_RESULT" == "cancelled" ]]; then
+            OVERALL_ICON="⏹️"
+            OVERALL_TITLE="SECURITY-ПРОВЕРКА ОТМЕНЕНА"
+            OVERALL_SUBTITLE="Запуск PostgreSQL Image Security был остановлен"
+          else
+            OVERALL_ICON="⚠️"
+            OVERALL_TITLE="SECURITY-ПРОВЕРКА НЕ ЗАВЕРШЕНА"
+            OVERALL_SUBTITLE="Проверка завершилась без полного результата"
+          fi
+
+          BRANCH="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+          REPOSITORY_HTML="$(escape_html "$GITHUB_REPOSITORY")"
+          BRANCH_HTML="$(escape_html "$BRANCH")"
+          ACTOR_HTML="$(escape_html "$GITHUB_ACTOR")"
+          EVENT_HTML="$(escape_html "$(event_label "$GITHUB_EVENT_NAME")")"
+          IMAGE_HTML="$(escape_html "$POSTGRES_IMAGE")"
+
+          RAW_COUNT_HTML="$(escape_html "${RAW_CRITICAL_COUNT:-не определено}")"
+          GOSU_COUNT_HTML="$(escape_html "${GOSU_TLS_COUNT:-не определено}")"
+          OTHER_COUNT_HTML="$(escape_html "${OTHER_CRITICAL_COUNT:-не определено}")"
+
+          MESSAGE=$(cat <<EOF
+          <b>PostgreSQL Image Security</b>
+          <i>Trivy • gosu reachability • CycloneDX SBOM</i>
+
+          ━━━━━━━━━━━━━━
+          ${OVERALL_ICON} <b>${OVERALL_TITLE}</b>
+          <i>${OVERALL_SUBTITLE}</i>
+          ━━━━━━━━━━━━━━
+
+          📦 <b>Репозиторий</b>
+          <code>${REPOSITORY_HTML}</code>
+
+          🐘 <b>PostgreSQL image</b>
+          <code>${IMAGE_HTML}</code>
+
+          🌿 <b>Ветка</b>
+          <code>${BRANCH_HTML}</code>
+
+          ⚡ <b>Событие:</b> ${EVENT_HTML}
+          👤 <b>Автор:</b> ${ACTOR_HTML}
+
+          🛡️ <b>Результаты security-проверки</b>
+          <blockquote>$(result_label "$SECURITY_RESULT")  PostgreSQL image security policy
+          🔎 Raw CRITICAL: ${RAW_COUNT_HTML}
+          🧬 gosu reachability-qualified: ${GOSU_COUNT_HTML}
+          🚨 Other blocking CRITICAL: ${OTHER_COUNT_HTML}
+          📦 CycloneDX SBOM evidence</blockquote>
+
+          🔗 <a href="${RUN_URL}"><b>Открыть security run в GitHub Actions</b></a>
+          <i>Запуск #${GITHUB_RUN_NUMBER}</i>
+          EOF
+          )
+
+          HTTP_CODE="$(curl --silent --show-error \
+            --retry 2 \
+            --retry-all-errors \
+            --connect-timeout 10 \
+            --max-time 20 \
+            --output /tmp/telegram-response.json \
+            --write-out '%{http_code}' \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=${MESSAGE}" \
+            --data-urlencode "parse_mode=HTML" \
+            --data-urlencode "disable_web_page_preview=true" \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" || true)"
+
+          if [[ "$HTTP_CODE" != "200" ]] ||
+             ! jq -e '.ok == true' /tmp/telegram-response.json >/dev/null 2>&1; then
+            echo "::warning::Telegram не подтвердил доставку PostgreSQL Image Security уведомления (HTTP ${HTTP_CODE:-transport-error})."
+
+            {
+              echo "## ✈️ Telegram"
+              echo
+              echo "⚠️ Security result сохранён, но Telegram не подтвердил доставку."
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            exit 0
+          fi
+
+          {
+            echo "## ✈️ Telegram"
+            echo
+            echo "✅ PostgreSQL Image Security result отправлен в Telegram."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "Telegram security notification sent."
