@@ -17,14 +17,14 @@ jobs:
         with:
           ref: ci/align-telegram-notification-style
 
-      - name: Align Telegram notification style
+      - name: Build patched workflow copy
         shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
 
-          path = Path('.github/workflows/main.yml')
-          text = path.read_text(encoding='utf-8')
+          source = Path('.github/workflows/main.yml')
+          text = source.read_text(encoding='utf-8')
           marker = '          if [[ -z "$TELEGRAM_BOT_TOKEN" || -z "$TELEGRAM_CHAT_ID" ]]; then\n'
           if text.count(marker) != 1:
               raise SystemExit(f'Expected exactly one Telegram script marker, found {text.count(marker)}')
@@ -149,17 +149,16 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           echo "Telegram notification sent."
           '''
-          path.write_text(text[:index] + replacement, encoding='utf-8')
+          Path('tmp-main-patched.yml').write_text(text[:index] + replacement, encoding='utf-8')
           PY
 
-      - name: Remove temporary workflow and commit final diff
+      - name: Publish patched workflow copy
         shell: bash
         run: |
           set -euo pipefail
-          rm .github/workflows/tmp-align-telegram.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .github/workflows/main.yml .github/workflows/tmp-align-telegram.yml
+          git add tmp-main-patched.yml
           git diff --cached --check
-          git commit -m "ci: align Telegram notification style"
+          git commit -m "chore: prepare Telegram workflow patch"
           git push origin HEAD:ci/align-telegram-notification-style
