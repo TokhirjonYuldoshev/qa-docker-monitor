@@ -3,7 +3,7 @@
 [![QA Database Health Monitor](https://github.com/TokhirjonYuldoshev/qa-docker-monitor/actions/workflows/main.yml/badge.svg)](https://github.com/TokhirjonYuldoshev/qa-docker-monitor/actions/workflows/main.yml)
 [![PostgreSQL Image Security](https://github.com/TokhirjonYuldoshev/qa-docker-monitor/actions/workflows/container-security.yml/badge.svg)](https://github.com/TokhirjonYuldoshev/qa-docker-monitor/actions/workflows/container-security.yml)
 
-Портфолио-проект по инженерии качества и наблюдаемому мониторингу PostgreSQL. Главный health-сигнал строится не на `ping` или открытом порте, а на **реальной записи в БД с точным read-back маркера текущего запуска**. GitHub Actions проверяет cloud/synthetic path, Windows contract-тесты защищают поведение `monitor.bat`, а Telegram используется только как вспомогательный канал доставки результата.
+Инженерный проект по качеству и наблюдаемому мониторингу PostgreSQL. Главный health-сигнал строится не на `ping` или открытом порте, а на **реальной записи в БД с точным read-back маркера текущего запуска**. GitHub Actions проверяет cloud/synthetic path, Windows contract-тесты защищают поведение `monitor.bat`, а Telegram используется только как вспомогательный канал доставки результата.
 
 ## Ключевые сигналы
 
@@ -25,7 +25,7 @@
 - независимый security workflow для PostgreSQL image: Trivy, reachability proof и CycloneDX SBOM;
 - стабильный `CI / Required gate`;
 - структурированный GitHub Actions Summary и сохраняемые evidence artifacts;
-- Telegram-уведомления в едином формате портфолио;
+- Telegram-уведомления в стандартизированном operational-формате;
 - Dependabot, `SECURITY.md`, `CONTRIBUTING.md`, `CODEOWNERS`, PR template и incident Issue Form;
 - формализованный разбор инцидентов без rerun-until-green и masking retries.
 
@@ -109,7 +109,7 @@ GitHub Actions Summary показывает общий итог, trigger, branch
 
 Telegram — **вспомогательный observability transport**, а не источник истины для DB health. Ошибка Telegram не делает исправную БД красной и не может скрыть реальный PostgreSQL failure.
 
-После push в `main`, manual или scheduled run сообщение оформляется в едином стиле портфолио:
+После push в `main`, manual или scheduled run сообщение оформляется в стандартизированном operational-формате:
 
 - заголовок `QA Database Health Monitor` и краткое описание;
 - крупный итоговый статус: `МОНИТОРИНГ ИСПРАВЕН`, `МОНИТОРИНГ ТРЕБУЕТ ВНИМАНИЯ`, `ЗАПУСК ОТМЕНЁН` или неполный результат;
@@ -212,6 +212,3 @@ qa-docker-monitor/
 
 Такой подход демонстрирует QA Engineering для инфраструктуры и CI/CD без заявления, что synthetic check является production-monitoring чужой системы.
 
----
-
-**Портфолио-проект Тохиржона Йулдошева**

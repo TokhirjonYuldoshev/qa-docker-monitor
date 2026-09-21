@@ -1,6 +1,6 @@
 # Политика безопасности
 
-Это публичный портфолио-проект по QA-мониторингу. В репозитории **не должны** находиться реальные Telegram credentials, Jenkins secrets или production database credentials.
+Это публичный проект по QA-мониторингу. В репозитории **не должны** находиться реальные Telegram credentials, Jenkins secrets или production database credentials.
 
 ## Поддерживаемое состояние
 
