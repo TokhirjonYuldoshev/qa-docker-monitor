@@ -388,7 +388,7 @@ jobs:
           {
             echo "## ✈️ Telegram"
             echo
-            echo "✅ Итог мониторинга отправлен в Telegram в едином формате портфолио."
+            echo "✅ Итог мониторинга отправлен в Telegram в стандартизированном operational-формате."
           } >> "$GITHUB_STEP_SUMMARY"
 
           echo "Telegram notification sent."
