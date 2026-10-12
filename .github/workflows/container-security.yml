@@ -206,7 +206,7 @@ jobs:
 
       - name: Upload PostgreSQL vulnerability evidence
         if: ${{ always() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: postgres-trivy-critical-${{ github.run_id }}
           path: reports/trivy-postgres.json
@@ -215,7 +215,7 @@ jobs:
 
       - name: Upload gosu reachability evidence
         if: ${{ always() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: gosu-reachability-${{ github.run_id }}
           path: |
@@ -228,7 +228,7 @@ jobs:
 
       - name: Upload PostgreSQL CycloneDX SBOM
         if: ${{ always() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: postgres-sbom-${{ github.run_id }}
           path: reports/postgres-sbom.cdx.json
